@@ -84,7 +84,7 @@ def store_debug(req: StoreDebugRequest):
             "text": req.text,
             "token_count": token_count,
             "embedding_dimensions": len(embedding_vector),
-            "embedding_preview": embedding_vrctor[:10],
+            "embedding_preview": embedding_vector[:10],
             "metadata": metadata
         }
 
