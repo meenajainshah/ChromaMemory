@@ -15,7 +15,7 @@ app = FastAPI()
 
 # Setup Chroma
 persist_directory = "./chroma_store"
-embedding_model = OpenAIEmbeddings()
+embedding = OpenAIEmbeddings()
 vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embedding)
 tokenizer = tiktoken.encoding_for_model("text-embedding-ada-002")
 
@@ -63,8 +63,8 @@ def store_debug(req: StoreDebugRequest):
         token_count = len(tokens)
         print(f"🔢 Token count: {token_count}")
 
-        embedding = embedding_model.embed_documents([req.text])[0]
-        print(f"📊 First 5 dims of embedding: {embedding[:5]}")
+        embedding_vector = embedding.embed_documents([req.text])[0]
+        print(f"📊 First 5 dims of embedding: {embedding_vector[:5]}")
 
         metadata = {
             "id": str(uuid.uuid4()),
@@ -81,8 +81,8 @@ def store_debug(req: StoreDebugRequest):
             "message": "Stored successfully",
             "text": req.text,
             "token_count": token_count,
-            "embedding_dimensions": len(embedding),
-            "embedding_preview": embedding[:10],
+            "embedding_dimensions": len(embedding_vector),
+            "embedding_preview": embedding_vrctor[:10],
             "metadata": metadata
         }
 
