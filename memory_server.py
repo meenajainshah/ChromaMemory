@@ -66,13 +66,15 @@ def store_debug(req: StoreDebugRequest):
         embedding_vector = embedding.embed_documents([req.text])[0]
         print(f"📊 First 5 dims of embedding: {embedding_vector[:5]}")
 
-        metadata = {
-            "id": str(uuid.uuid4()),
-            "user": req.user,
-            "source": req.source,
-            "token_count": token_count,
-            "tags": req.tags,
-        }
+    tags = req.tags if isinstance(req.tags, list) else [req.tags]
+metadata = {
+    "id": str(uuid.uuid4()),
+    "user": req.user,
+    "source": req.source,
+    "token_count": token_count,
+    "tags": ", ".join(tags) if tags else None
+}
+
 
         vectorstore.add_texts([req.text], metadatas=[metadata])
         print(f"✅ Stored in vector DB with metadata: {metadata}")
