@@ -1,34 +1,37 @@
 
-
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Body
+from pydantic import BaseModel
+from typing import Optional
 from langchain.vectorstores import Chroma
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.schema import Document
+from langchain.embeddings import OpenAIEmbeddings
 import os
 
 app = FastAPI()
 
-# Load OpenAI key from environment variable
-embedding_model = OpenAIEmbeddings()
-
 # Setup Chroma
-CHROMA_DIR = "./chroma_store"
-vectorstore = Chroma(persist_directory=CHROMA_DIR, embedding_function=embedding_model)
+persist_directory = "./chroma_store"
+embedding = OpenAIEmbeddings()
+vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embedding)
+
+# Input model for POST request
+class QueryRequest(BaseModel):
+    query: str
 
 @app.get("/")
-def root():
-    return {"message": "Memory API is running. Try /docs or use /store and /retrieve."}
-
-@app.post("/store")
-async def store_memory(request: Request):
-    data = await request.json()
-    text = data.get("text", "")
-    if text:
-        vectorstore.add_documents([Document(page_content=text)])
-        return {"status": "stored"}
-    return {"status": "no text provided"}
+def read_root():
+    return {"message": "Chroma memory API is running!"}
 
 @app.get("/retrieve")
-async def retrieve_memory(query: str):
-    results = vectorstore.similarity_search(query, k=3)
-    return {"results": [doc.page_content for doc in results]}
+def retrieve_get(query: str = Query(..., description="Query string to retrieve similar memories")):
+    results = vectorstore.similarity_search(query)
+    return {"results": [r.page_content for r in results]}
+
+@app.post("/retrieve")
+def retrieve_post(request: QueryRequest = Body(...)):
+    results = vectorstore.similarity_search(request.query)
+    return {"results": [r.page_content for r in results]}
+
+@app.get("/docs")
+def custom_docs_redirect():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse("/docs")
