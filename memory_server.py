@@ -56,7 +56,7 @@ class StoreDebugRequest(BaseModel):
 # Debug store endpoint
 @app.post("/debug_store")
 def store_debug(req: StoreDebugRequest):
-    try:
+   
         print(f"📥 Received text: {req.text}")
 
         tokens = tokenizer.encode(req.text)
@@ -88,10 +88,7 @@ metadata = {
             "metadata": metadata
         }
 
-    except Exception as e:
-        print("❌ Error in /debug_store:", str(e))
-        return {"error": str(e)}
-
+ 
 @app.get("/docs")
 def custom_docs_redirect():
     from fastapi.responses import RedirectResponse
