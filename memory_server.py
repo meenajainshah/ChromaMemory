@@ -63,7 +63,7 @@ def store_debug(req: StoreDebugRequest):
         token_count = len(tokens)
         print(f"🔢 Token count: {token_count}")
 
-        embedding = embedding_model.embed_documents([req.text])[0]
+        embedding = embedding.embed_documents([req.text])[0]
         print(f"📊 First 5 dims of embedding: {embedding[:5]}")
 
         metadata = {
