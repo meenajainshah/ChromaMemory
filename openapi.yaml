@@ -1,0 +1,32 @@
+
+openapi: 3.0.0
+info:
+  title: Memory API
+  version: 1.0.0
+paths:
+  /store:
+    post:
+      operationId: storeMemory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+      responses:
+        '200':
+          description: Stored memory
+  /retrieve:
+    get:
+      operationId: retrieveMemory
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Retrieved memory
