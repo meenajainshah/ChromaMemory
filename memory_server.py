@@ -44,8 +44,3 @@ def retrieve_post(request: QueryRequest = Body(...)):
 def custom_docs_redirect():
     from fastapi.responses import RedirectResponse
     return RedirectResponse("/docs")
-
-@app.get("/docs")
-def custom_docs_redirect():
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse("/docs")
