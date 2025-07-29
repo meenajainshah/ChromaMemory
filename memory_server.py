@@ -56,33 +56,39 @@ class StoreDebugRequest(BaseModel):
 # Debug store endpoint
 @app.post("/debug_store")
 def store_debug(req: StoreDebugRequest):
-    # Tokenization
-    tokens = tokenizer.encode(req.text)
-    token_count = len(tokens)
+    try:
+        print(f"📥 Received text: {req.text}")
 
-    # Embedding
-    embedding = embedding_model.embed_documents([req.text])[0]
+        tokens = tokenizer.encode(req.text)
+        token_count = len(tokens)
+        print(f"🔢 Token count: {token_count}")
 
-    # Metadata
-    metadata = {
-        "id": str(uuid.uuid4()),
-        "user": req.user,
-        "source": req.source,
-        "token_count": token_count,
-        "tags": req.tags,
-    }
+        embedding = embedding_model.embed_documents([req.text])[0]
+        print(f"📊 First 5 dims of embedding: {embedding[:5]}")
 
-    # Store in Chroma
-    vectorstore.add_texts([req.text], metadatas=[metadata])
+        metadata = {
+            "id": str(uuid.uuid4()),
+            "user": req.user,
+            "source": req.source,
+            "token_count": token_count,
+            "tags": req.tags,
+        }
 
-    return {
-        "message": "Stored successfully",
-        "text": req.text,
-        "token_count": token_count,
-        "embedding_dimensions": len(embedding),
-        "embedding_preview": embedding[:10],  # Show first 10 dims
-        "metadata": metadata
-    }
+        vectorstore.add_texts([req.text], metadatas=[metadata])
+        print(f"✅ Stored in vector DB with metadata: {metadata}")
+
+        return {
+            "message": "Stored successfully",
+            "text": req.text,
+            "token_count": token_count,
+            "embedding_dimensions": len(embedding),
+            "embedding_preview": embedding[:10],
+            "metadata": metadata
+        }
+
+    except Exception as e:
+        print("❌ Error in /debug_store:", str(e))
+        return {"error": str(e)}
 
 @app.get("/docs")
 def custom_docs_redirect():
