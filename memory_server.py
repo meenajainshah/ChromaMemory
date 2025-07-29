@@ -1,25 +1,21 @@
-
 from fastapi import FastAPI, Query, Body
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from langchain.vectorstores import Chroma
 from langchain.embeddings import OpenAIEmbeddings
-import os
 import uuid
 import tiktoken
-from typing import List, Optional
-
-# Initialize once (if not already)
 
 app = FastAPI()
 
-# Setup Chroma
+# Setup Chroma and tokenizer
 persist_directory = "./chroma_store"
 embedding = OpenAIEmbeddings()
 vectorstore = Chroma(persist_directory=persist_directory, embedding_function=embedding)
 tokenizer = tiktoken.encoding_for_model("text-embedding-ada-002")
 
-# Input models
+# Request models
 class QueryRequest(BaseModel):
     query: str
 
@@ -27,6 +23,13 @@ class AddMemoryRequest(BaseModel):
     text: str
     metadata: Optional[dict] = None
 
+class StoreDebugRequest(BaseModel):
+    text: str
+    user: Optional[str] = "GPT"
+    source: Optional[str] = "conversation"
+    tags: Optional[List[str]] = []
+
+# Routes
 @app.get("/")
 def read_root():
     return {"message": "Chroma memory API is running!"}
@@ -46,17 +49,9 @@ def retrieve_post(request: QueryRequest = Body(...)):
     results = vectorstore.similarity_search(request.query)
     return {"results": [r.page_content for r in results]}
 
-# Request schema
-class StoreDebugRequest(BaseModel):
-    text: str
-    user: Optional[str] = "GPT"
-    source: Optional[str] = "conversation"
-    tags: Optional[List[str]] = []
-
-# Debug store endpoint
 @app.post("/debug_store")
 def store_debug(req: StoreDebugRequest):
-   
+    try:
         print(f"📥 Received text: {req.text}")
 
         tokens = tokenizer.encode(req.text)
@@ -67,14 +62,14 @@ def store_debug(req: StoreDebugRequest):
         print(f"📊 First 5 dims of embedding: {embedding_vector[:5]}")
 
         tags = req.tags if isinstance(req.tags, list) else [req.tags]
-    metadata = {
-        "id": str(uuid.uuid4()),
-        "user": req.user,
-        "source": req.source,
-        "token_count": token_count,
-        "tags": ", ".join(tags) if tags else None
-}
 
+        metadata = {
+            "id": str(uuid.uuid4()),
+            "user": req.user,
+            "source": req.source,
+            "token_count": token_count,
+            "tags": ", ".join(tags) if tags else None
+        }
 
         vectorstore.add_texts([req.text], metadatas=[metadata])
         print(f"✅ Stored in vector DB with metadata: {metadata}")
@@ -88,8 +83,10 @@ def store_debug(req: StoreDebugRequest):
             "metadata": metadata
         }
 
- 
-@app.get("/docs")
+    except Exception as e:
+        print(f"❌ Error during debug_store: {e}")
+        return {"error": str(e)}
+
+@app.get("/go-to-docs")  # renamed to avoid conflict
 def custom_docs_redirect():
-    from fastapi.responses import RedirectResponse
     return RedirectResponse("/docs")
