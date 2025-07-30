@@ -22,3 +22,9 @@ def add_memory(request: AddMemoryRequest):
 @router.post("/retrieve")
 def retrieve_memory(request: QueryRequest):
     return {"results": memory.query_text(request.query, request.top_k)}
+
+@router.get("/retrieve")
+def retrieve_get(query: str = Query(..., description="Query string to retrieve similar memories")):
+    results = vectorstore.similarity_search(query)
+    return {"results": [r.page_content for r in results]}
+
