@@ -51,4 +51,4 @@ def retrieve_memory(request: QueryRequest):
         )
     }
         
-    }
+    
