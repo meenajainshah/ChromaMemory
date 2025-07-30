@@ -8,6 +8,8 @@ import uuid
 import tiktoken
 
 app = FastAPI()
+memory = MemoryController()
+
 
 # Setup Chroma and tokenizer
 persist_directory = "./chroma_store"
@@ -18,6 +20,8 @@ tokenizer = tiktoken.encoding_for_model("text-embedding-ada-002")
 # Request models
 class QueryRequest(BaseModel):
     query: str
+    top_k: Optional[int] = 5
+
 
 class AddMemoryRequest(BaseModel):
     text: str
@@ -36,8 +40,9 @@ def read_root():
 
 @app.post("/store")
 def add_memory(request: AddMemoryRequest):
-    vectorstore.add_texts([request.text], metadatas=[request.metadata] if request.metadata else None)
+    memory.add_text(request.text, request.metadata)
     return {"message": "Memory added!"}
+
 
 @app.get("/retrieve")
 def retrieve_get(query: str = Query(..., description="Query string to retrieve similar memories")):
@@ -46,8 +51,8 @@ def retrieve_get(query: str = Query(..., description="Query string to retrieve s
 
 @app.post("/retrieve")
 def retrieve_post(request: QueryRequest = Body(...)):
-    results = vectorstore.similarity_search(request.query)
-    return {"results": [r.page_content for r in results]}
+    results = memory.query_text(request.query, top_k=request.top_k)
+    return {"results": results}
 
 @app.post("/debug_store")
 def store_debug(req: StoreDebugRequest):
