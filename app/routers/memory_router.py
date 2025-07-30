@@ -24,7 +24,15 @@ def retrieve_memory(request: QueryRequest):
     return {"results": memory.query_text(request.query, request.top_k)}
 
 @router.get("/retrieve")
-def retrieve_get(query: str = Query(..., description="Query string to retrieve similar memories")):
-    results = vectorstore.similarity_search(query)
-    return {"results": [r.page_content for r in results]}
+def retrieve_get(entity_id: str, platform: Optional[str] = None, thread_id: Optional[str] = None):
+    results = memory.retrieve_all_for_entity(entity_id, platform, thread_id)
+    return {
+        "results": [
+            {
+                "text": r[0].page_content,
+                "metadata": r[0].metadata,
+                "score": r[1]
+            } for r in results
+        ]
+    }
 
