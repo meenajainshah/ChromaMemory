@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import Optional
 from controllers.memory_controller import MemoryController
 
@@ -8,11 +8,22 @@ memory = MemoryController()
 
 class AddMemoryRequest(BaseModel):
     text: str
-    metadata: Optional[dict] = None
+    metadata: dict
+
+    @validator('metadata')
+    def require_metadata_keys(cls, v):
+        required = ['entity_id', 'platform', 'thread_id']
+        for key in required:
+            if key not in v:
+                raise ValueError(f"Missing required metadata field: {key}")
+        return v
 
 class QueryRequest(BaseModel):
     query: str
     top_k: Optional[int] = 5
+    entity_id: str
+    platform: Optional[str] = None
+    thread_id: Optional[str] = None
 
 @router.post("/store")
 def add_memory(request: AddMemoryRequest):
@@ -21,7 +32,12 @@ def add_memory(request: AddMemoryRequest):
 
 @router.post("/retrieve")
 def retrieve_memory(request: QueryRequest):
-    return {"results": memory.query_text(request.query, request.top_k)}
+    filters = {"entity_id": request.entity_id}
+    if request.platform:
+        filters["platform"] = request.platform
+    if request.thread_id:
+        filters["thread_id"] = request.thread_id
+    return {"results": memory.query_text(request.query, request.top_k, filters)}
 
 @router.get("/retrieve")
 def retrieve_get(entity_id: str, platform: Optional[str] = None, thread_id: Optional[str] = None):
@@ -35,4 +51,3 @@ def retrieve_get(entity_id: str, platform: Optional[str] = None, thread_id: Opti
             } for r in results
         ]
     }
-

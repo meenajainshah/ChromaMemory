@@ -13,20 +13,11 @@ class MemoryController:
         )
         self.tokenizer = tiktoken.encoding_for_model("text-embedding-ada-002")
 
-    def add_text(self, text: str, metadata: Optional[dict] = None):
-        self.vectorstore.add_texts([text], metadatas=[metadata] if metadata else None)
+    def add_text(self, text: str, metadata: dict):
+        self.vectorstore.add_texts([text], metadatas=[metadata])
 
-    def retrieve_all_for_entity(self, entity_id: str, platform: Optional[str] = None, thread_id: Optional[str] = None):
-    filters = {"entity_id": entity_id}
-    if platform:
-        filters["platform"] = platform
-    if thread_id:
-        filters["thread_id"] = thread_id
-    return self.vectorstore.similarity_search_with_score("", k=100, filter=filters)
-
-
-    def query_text(self, query: str, top_k: int = 5):
-        results = self.vectorstore.similarity_search_with_score(query, k=top_k)
+    def query_text(self, query: str, top_k: int = 5, filter: Optional[dict] = None):
+        results = self.vectorstore.similarity_search_with_score(query, k=top_k, filter=filter)
         return [
             {
                 "text": r[0].page_content,
@@ -34,3 +25,11 @@ class MemoryController:
                 "score": r[1]
             } for r in results
         ]
+
+    def retrieve_all_for_entity(self, entity_id: str, platform: Optional[str] = None, thread_id: Optional[str] = None):
+        filters = {"entity_id": entity_id}
+        if platform:
+            filters["platform"] = platform
+        if thread_id:
+            filters["thread_id"] = thread_id
+        return self.vectorstore.similarity_search_with_score("", k=100, filter=filters)
