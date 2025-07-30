@@ -39,15 +39,16 @@ def retrieve_memory(request: QueryRequest):
         filters["thread_id"] = request.thread_id
     return {"results": memory.query_text(request.query, request.top_k, filters)}
 
-@router.get("/retrieve")
-def retrieve_get(entity_id: str, platform: Optional[str] = None, thread_id: Optional[str] = None):
-    results = memory.retrieve_all_for_entity(entity_id, platform, thread_id)
+@router.post("/retrieve")
+def retrieve_memory(request: QueryRequest):
     return {
-        "results": [
-            {
-                "text": r[0].page_content,
-                "metadata": r[0].metadata,
-                "score": r[1]
-            } for r in results
+        "results": memory.query_text(
+            request.query,
+            request.entity_id,
+            request.platform,
+            request.thread_id,
+            request.top_k
+        )
+    }
         ]
     }
