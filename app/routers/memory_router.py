@@ -30,14 +30,6 @@ def add_memory(request: AddMemoryRequest):
     memory.add_text(request.text, request.metadata)
     return {"message": "Memory added!"}
 
-@router.get("/retrieve")
-def retrieve_memory(request: QueryRequest):
-    filters = {"entity_id": request.entity_id}
-    if request.platform:
-        filters["platform"] = request.platform
-    if request.thread_id:
-        filters["thread_id"] = request.thread_id
-    return {"results": memory.query_text(request.query, request.top_k, filters)}
 
 @router.post("/retrieve")
 def retrieve_memory(request: QueryRequest):
