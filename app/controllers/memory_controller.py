@@ -18,12 +18,10 @@ class MemoryController:
 
     def query_text(self, query: str, top_k: int = 5):
         results = self.vectorstore.similarity_search_with_score(query, k=top_k)
-        formatted = [
+        return [
             {
-                "text": item[0].page_content,
-                "metadata": item[0].metadata,
-                "score": item[1]
-            }
-            for item in results
+                "text": r[0].page_content,
+                "metadata": r[0].metadata,
+                "score": r[1]
+            } for r in results
         ]
-        return formatted
