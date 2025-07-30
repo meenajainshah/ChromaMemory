@@ -30,11 +30,15 @@ class MemoryController:
             "platform": platform,
             "thread_id": thread_id
         }
-        results = self.vectorstore.similarity_search_with_score(query, k=top_k, filter=filters)
-        return [
-            {
-                "text": r[0].page_content,
-                "metadata": r[0].metadata,
-                "score": r[1]
-            } for r in results
-        ]
+        try:
+            results = self.vectorstore.similarity_search_with_score(query, k=top_k, filter=filters)
+            return [
+                {
+                    "text": r[0].page_content,
+                    "metadata": r[0].metadata,
+                    "score": r[1]
+                } for r in results
+            ]
+        except Exception as e:
+            print("🔴 ERROR in similarity search:", e)
+            raise
