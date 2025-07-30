@@ -50,5 +50,5 @@ def retrieve_memory(request: QueryRequest):
             request.top_k
         )
     }
-        ]
+        
     }
