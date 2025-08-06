@@ -2,11 +2,17 @@ from fastapi import APIRouter
 from pydantic import BaseModel, validator
 from typing import Optional
 from controllers.memory_controller import MemoryController
-
+from fastapi import Header, HTTPException, Depends
+import os
 
 
 router = APIRouter()
 memory = MemoryController()
+#User secret key for authorization
+async def verify_token(x_api_key: str = Header(...)):
+    if x_api_key != os.getenv("WIX_SECRET_KEY"):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
 
 class AddMemoryRequest(BaseModel):
     text: str
