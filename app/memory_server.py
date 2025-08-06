@@ -9,12 +9,7 @@ from routers.chat_router import router as chat_router
 
 app = FastAPI()
 
-app = FastAPI()
 
-# Include all routers here
-app.include_router(memory_router)
-app.include_router(gpt_router)
-app.include_router(chat_router)
 
 @app.get("/")
 def root():
@@ -28,7 +23,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include all routers here
 app.include_router(memory_router)
+app.include_router(gpt_router)
+app.include_router(chat_router)
 
 
 @app.get("/")
