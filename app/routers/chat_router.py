@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 import openai
+import os
 from controllers.memory_controller import MemoryController
 
 router = APIRouter()
