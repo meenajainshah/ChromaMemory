@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
 from routers.memory_router import router as memory_router
 
 app = FastAPI()
