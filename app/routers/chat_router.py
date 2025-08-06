@@ -20,7 +20,7 @@ class ChatRequest(BaseModel):
     text: str
     metadata: dict
 
-@router.post("/chat")
+@router.post("/chat", dependencies=[Depends(verify_token)])
 def chat_with_memory_and_gpt(request: ChatRequest):
     required_keys = ["entity_id", "platform", "thread_id"]
     for key in required_keys:
