@@ -27,8 +27,14 @@ class QueryRequest(BaseModel):
 
 @router.post("/store")
 def add_memory(request: AddMemoryRequest):
+     print("📥 Received text:", request.text)
+    print("🧠 Metadata:", request.metadata)
     memory.add_text(request.text, request.metadata)
     return {"message": "Memory added!"}
+
+   
+
+
 
 
 @router.post("/retrieve")
