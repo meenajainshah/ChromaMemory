@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers.memory_router import router as memory_router
 from routers.gpt_router import router as gpt_router
 from routers.chat_router import router as chat_router
+from routers.debug_router import router as debug_router
 
 
 app = FastAPI()
@@ -25,6 +26,7 @@ app.add_middleware(
 app.include_router(memory_router)
 app.include_router(gpt_router)
 app.include_router(chat_router)
+app.include_router(debug_router)
 
 
 @app.get("/")
