@@ -3,9 +3,15 @@ from pydantic import BaseModel
 from controllers.memory_controller import MemoryController
 import openai
 import os
-
+from fastapi import Header, HTTPException, Depends
 router = APIRouter()
 memory = MemoryController()
+
+#User secret key for authorization
+async def verify_token(x_api_key: str = Header(...)):
+    if x_api_key != os.getenv("WIX_SECRET_KEY"):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
 
 # Use OpenAI's v1+ client
 client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
