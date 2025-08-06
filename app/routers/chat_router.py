@@ -1,13 +1,14 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
+from controllers.memory_controller import MemoryController
 import openai
 import os
-from controllers.memory_controller import MemoryController
 
 router = APIRouter()
 memory = MemoryController()
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Use OpenAI's v1+ client
+client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 class ChatRequest(BaseModel):
     text: str
@@ -15,33 +16,40 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat")
 def chat_with_memory_and_gpt(request: ChatRequest):
-    # Step 1: Validate metadata
     required_keys = ["entity_id", "platform", "thread_id"]
     for key in required_keys:
         if key not in request.metadata:
             return {"error": f"Missing metadata key: {key}"}
 
-    # Step 2: Store to Chroma memory
+    # Step 1: Store to Chroma memory
     try:
         memory.add_text(request.text, request.metadata)
     except Exception as e:
         return {"error": f"Memory store failed: {str(e)}"}
 
-    # Step 3: Call GPT
+    # Step 2: Call GPT via v1.0 client
     try:
-        response = openai.ChatCompletion.create(
+        completion = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are Talent Sourcer GPT. Help users clarify their hiring need, suggest suitable roles, and match them with talent."},
-                {"role": "user", "content": request.text}
+                {
+                    "role": "system",
+                    "content": "You are Talent Sourcer GPT. Help users clarify their hiring need, suggest suitable roles, and match them with talent."
+                },
+                {
+                    "role": "user",
+                    "content": request.text
+                }
             ],
             user=request.metadata["thread_id"]
         )
-        reply = response.choices[0].message["content"]
+
+        reply = completion.choices[0].message.content
         return {
             "memory": "✅ Stored successfully",
             "reply": reply
         }
+
     except Exception as e:
         return {
             "memory": "✅ Stored successfully",
