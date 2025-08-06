@@ -33,7 +33,7 @@ class QueryRequest(BaseModel):
     platform: Optional[str] = None
     thread_id: Optional[str] = None
 
-@router.post("/store")
+@router.post("/store", dependencies=[Depends(verify_token)])
 def add_memory(request: AddMemoryRequest):
     print("📥 Received text:", request.text)
     print("🧠 Metadata:", request.metadata)
@@ -44,8 +44,7 @@ def add_memory(request: AddMemoryRequest):
 
 
 
-
-@router.post("/retrieve")
+@router.post("/retrieve", dependencies=[Depends(verify_token)])
 def retrieve_memory(request: QueryRequest):
     return {
         "results": memory.query_text(
