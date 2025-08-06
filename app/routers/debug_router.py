@@ -1,3 +1,11 @@
+from fastapi import APIRouter
+from pydantic import BaseModel
+from controllers.memory_controller import MemoryController
+import openai
+import os
+from fastapi import Header, HTTPException, Depends
+router = APIRouter()
+memory = MemoryController()
 from fastapi import Query
 from typing import Optional
 
