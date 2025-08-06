@@ -3,9 +3,7 @@ from pydantic import BaseModel, validator
 from typing import Optional
 from controllers.memory_controller import MemoryController
 
-from routers.gpt_router import router as gpt_router
 
-app.include_router(gpt_router)
 
 router = APIRouter()
 memory = MemoryController()
