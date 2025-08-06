@@ -1,8 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from routers.memory_router import router as memory_router
-from fastapi import FastAPI
 from routers.gpt_router import router as gpt_router
 from routers.chat_router import router as chat_router
 
