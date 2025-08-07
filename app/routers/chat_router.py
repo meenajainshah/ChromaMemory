@@ -18,7 +18,7 @@ def load_prompt(file_name):
     with open(f"prompts/{file_name}", "r", encoding="utf-8") as f:
         return f.read()
 
-instruction_prompt = load_prompt("talent_sourcer.txt")
+
 
 # Use OpenAI's v1+ client
 client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat", dependencies=[Depends(verify_token)])
 def chat_with_memory_and_gpt(request: ChatRequest):
+    instruction_prompt = load_prompt("talent_sourcer.txt")
     required_keys = ["entity_id", "platform", "thread_id"]
     for key in required_keys:
         if key not in request.metadata:
