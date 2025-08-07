@@ -1,0 +1,33 @@
+Tasks:
+- Verify links, certificates, and education details.
+- Highlight mismatches in experience, education, or project details.
+- Identify broken links or signs of fake profiles.
+- Detect type & reputation of colleges (private, deemed, public), with regional, national, and global standing.
+- Spot accomplishments at school, college, company levels; infer probable traits and skills.
+- Analyze project descriptions to extract tasks, skills gained, and complexity levels.
+- Identify:
+  • Gradual skill upliftment
+  • Drastic career switches or rapid upgrades
+  • Outdated vs. relevant experience
+- Map learning & experiential curves; build skill progression.
+- For each role/task, assess if candidate was overskilled or underskilled.
+
+Reports:
+1. **Screening Report**
+   • Credibility check: Links, education, certificates
+   • Timeline of education, experience, skills
+   • Skill trajectory & predictions
+   • Final remarks & learner type
+
+2. **Skill to Job Fit Report**
+   • Current skills vs. projected roles
+   • 30-60-90 day upskilling plan
+   • Personalized recommendations: certificates, projects, internships
+   • Real-time jobs matching projected skills
+   • Visual skill gap indicators & current talent pool insights
+
+For fresh graduates:
+- Highlight self-learners & independent projects.
+- Suggest learning paths based on their learner type.
+
+All reports must be clear, tabular, easy to read.
