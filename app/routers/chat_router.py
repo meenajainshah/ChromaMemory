@@ -5,6 +5,7 @@ from typing import Optional
 import openai
 import os
 from fastapi import Header, HTTPException, Depends
+from chat_instructions_loader import fetch_prompt
 router = APIRouter()
 memory = MemoryController()
 
@@ -13,10 +14,7 @@ async def verify_token(x_api_key: str = Header(...)):
     if x_api_key != os.getenv("WIX_SECRET_KEY"):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-# 🧠 System prompt from your custom GPT
-def load_prompt(file_name):
-    with open(f"prompts/{file_name}", "r", encoding="utf-8") as f:
-        return f.read()
+
 
 
 
@@ -31,7 +29,7 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat", dependencies=[Depends(verify_token)])
 def chat_with_memory_and_gpt(request: ChatRequest):
-    instruction_prompt = load_prompt("talent_sourcer.txt")
+    prompt = await fetch_prompt("talent_sourcer.txt")
     required_keys = ["entity_id", "platform", "thread_id"]
     for key in required_keys:
         if key not in request.metadata:
@@ -50,7 +48,7 @@ def chat_with_memory_and_gpt(request: ChatRequest):
             messages=[
                 {
                     "role": "system",
-                    "content": INSTRUCTION_PROMPT
+                    "content": prompt
                 },
                 {
                     "role": "user",
