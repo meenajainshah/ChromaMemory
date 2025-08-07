@@ -210,7 +210,7 @@ def chat_with_memory_and_gpt(request: ChatRequest):
                 }
             ],
             temperature=0.7,
-            max_tokens=500
+            max_tokens=500,
             user=request.metadata["thread_id"]
         )
 
