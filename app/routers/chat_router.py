@@ -1,42 +1,45 @@
-from fastapi import APIRouter, HTTPException, Header, Depends
+# routers/chat_router.py
+
+from fastapi import APIRouter, Header, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Dict
-from controllers.memory_controller import MemoryController
-from services.chat_instructions_loader import get_talent_prompt
+from typing import Dict, Optional
 from openai import AsyncOpenAI
+from controllers.memory_controller import MemoryController
+from services.chat_instructions_loader import get_prompt_for
 import os
 
 router = APIRouter()
 memory = MemoryController()
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Auth
 async def verify_token(x_api_key: str = Header(...)):
     if x_api_key != os.getenv("WIX_SECRET_KEY"):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
+# Request model
 class ChatRequest(BaseModel):
     text: str
     metadata: Dict[str, str]
+    gpt_type: Optional[str] = "talent"  # "talent" | "outcome" | "automation"
 
 @router.post("/chat", dependencies=[Depends(verify_token)])
 async def chat_with_memory_and_gpt(request: ChatRequest):
-    # 1) Load system instructions (async + cached)
-    instruction_prompt = await get_talent_prompt()
+    # Load instructions for the selected GPT (cached per file)
+    instruction_prompt = await get_prompt_for(request.gpt_type or "talent")
 
-    # 2) Validate metadata
-    required_keys = ["entity_id", "platform", "thread_id"]
-    for k in required_keys:
+    # Validate metadata
+    for k in ["entity_id", "platform", "thread_id"]:
         if k not in request.metadata:
             raise HTTPException(status_code=400, detail=f"Missing metadata key: {k}")
 
-    # 3) Store to memory
+    # Store to memory
     try:
         memory.add_text(request.text, request.metadata)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Memory store failed: {str(e)}")
 
-    # 4) Call OpenAI (async client)
+    # Call OpenAI
     try:
         completion = await client.chat.completions.create(
             model="gpt-3.5-turbo",  # or "gpt-4"
@@ -51,4 +54,5 @@ async def chat_with_memory_and_gpt(request: ChatRequest):
         reply = completion.choices[0].message.content
         return {"memory": "✅ Stored successfully", "reply": reply}
     except Exception as e:
+        # Still report memory success, but include GPT error
         return {"memory": "✅ Stored successfully", "reply": f"❌ GPT error: {str(e)}"}
