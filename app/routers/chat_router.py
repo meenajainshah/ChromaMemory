@@ -5,7 +5,7 @@ from typing import Optional
 import openai
 import os
 from fastapi import Header, HTTPException, Depends
-from chat_instructions_loader import fetch_prompt
+from services.chat_instructions_loader import get_talent_prompt
 router = APIRouter()
 memory = MemoryController()
 
@@ -29,7 +29,7 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat", dependencies=[Depends(verify_token)])
 def chat_with_memory_and_gpt(request: ChatRequest):
-    prompt = await fetch_prompt("SUPABASE_TALENTPROMPT_URL")
+ instruction_prompt = await get_talent_prompt()  # cached after first call
     required_keys = ["entity_id", "platform", "thread_id"]
     for key in required_keys:
         if key not in request.metadata:
