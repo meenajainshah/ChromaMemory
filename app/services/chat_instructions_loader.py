@@ -1,43 +1,54 @@
 # chat_instructions_loader.py
+# Loads Talent Sourcer GPT instructions from a URL stored in SUPABASE_TALENTPROMPT_URL.
+# - Caches in memory with TTL
+# - Uses httpx with timeouts
+# - Safe fallbacks and clear errors
 
-import httpx
 import os
 import time
+import httpx
+
+# ---- Config from environment ----
+PROMPT_URL = os.getenv("SUPABASE_TALENTPROMPT_URL")  # e.g., public/signed Supabase URL
+CACHE_TTL_SECONDS = int(os.getenv("PROMPT_CACHE_TTL", "900"))  # default 15 min
+
+# ---- In-memory cache ----
+_cache_text: str | None = None
+_cache_expiry: float = 0.0
 
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
-BUCKET = "prompts"
+async def _fetch_prompt_from_url(url: str) -> str:
+    if not url:
+        raise RuntimeError("SUPABASE_TALENTPROMPT_URL is not set.")
 
-# In-memory cache
-_cached_prompts = {}
-_prompt_expiry = {}
+    # Short, strict timeouts so we don't hang on slow builds/requests
+    timeout = httpx.Timeout(connect=5.0, read=8.0, write=5.0, pool=5.0)
 
-def get_supabase_signed_url(filename: str, expires_in: int = 3600):
-    """Get a signed URL from Supabase"""
-    url = f"{SUPABASE_URL}/storage/v1/object/sign/{BUCKET}/{filename}?expiresIn={expires_in}"
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    return httpx.get(url, headers=headers).json()["signedURL"]
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        text = resp.text.strip()
+        if not text:
+            raise RuntimeError("Prompt fetched but was empty.")
+        return text
 
-async def fetch_prompt(prompt_name: str) -> str:
-    """Fetch prompt with cache + fallback"""
+
+async def get_talent_prompt(force_refresh: bool = False) -> str:
+    """Return the Talent Sourcer prompt, using cached value unless expired or forced."""
+    global _cache_text, _cache_expiry
+
     now = time.time()
-    cached = _cached_prompts.get(prompt_name)
-    expiry = _prompt_expiry.get(prompt_name, 0)
+    if not force_refresh and _cache_text and now < _cache_expiry:
+        return _cache_text
 
-    if cached and now < expiry:
-        return cached
+    # Fetch fresh
+    text = await _fetch_prompt_from_url(PROMPT_URL)
+    _cache_text = text
+    _cache_expiry = now + CACHE_TTL_SECONDS
+    return text
 
-    try:
-        signed_url = get_supabase_signed_url(prompt_name)
-        res = httpx.get(signed_url)
-        res.raise_for_status()
-        prompt_text = res.text
 
-        _cached_prompts[prompt_name] = prompt_text
-        _prompt_expiry[prompt_name] = now + 3600  # Cache for 1 hour
-
-        return prompt_text
-    except Exception as e:
-        print(f"❌ Error fetching prompt: {e}")
-        return "Instruction prompt could not be loaded."
+# Optional: sync helper if you ever call from sync context
+def get_talent_prompt_sync(force_refresh: bool = False) -> str:
+    import anyio
+    return anyio.run(get_talent_prompt, force_refresh)
