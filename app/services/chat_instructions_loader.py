@@ -21,6 +21,7 @@ PROMPT_FILE_MAP = {
     "talent": os.getenv("PROMPT_FILE_TALENT", "talent_sourcer.txt"),
     "outcome": os.getenv("PROMPT_FILE_OUTCOME", "outcome_hiring.txt"),
     "automation": os.getenv("PROMPT_FILE_AUTOMATION", "automation_assistant.txt"),
+    "scrn": os.getenv("PROMPT_FILE_SCRN", "scrn_assistant.txt")
 }
 CACHE_TTL = int(os.getenv("PROMPT_CACHE_TTL", "900"))  # seconds (15m default)
 
