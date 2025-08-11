@@ -29,7 +29,7 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat", dependencies=[Depends(verify_token)])
 def chat_with_memory_and_gpt(request: ChatRequest):
-    prompt = await fetch_prompt("talent_sourcer.txt")
+    prompt = await fetch_prompt("SUPABASE_TALENTPROMPT_URL")
     required_keys = ["entity_id", "platform", "thread_id"]
     for key in required_keys:
         if key not in request.metadata:
