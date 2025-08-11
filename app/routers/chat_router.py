@@ -1,73 +1,54 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
+from typing import Dict
 from controllers.memory_controller import MemoryController
-from typing import Optional
-import openai
-import os
-from fastapi import Header, HTTPException, Depends
 from services.chat_instructions_loader import get_talent_prompt
+from openai import AsyncOpenAI
+import os
+
 router = APIRouter()
 memory = MemoryController()
 
-#User secret key for authorization
 async def verify_token(x_api_key: str = Header(...)):
     if x_api_key != os.getenv("WIX_SECRET_KEY"):
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-
-
-
-
-# Use OpenAI's v1+ client
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 class ChatRequest(BaseModel):
     text: str
-    metadata: dict
-
-
+    metadata: Dict[str, str]
 
 @router.post("/chat", dependencies=[Depends(verify_token)])
-def chat_with_memory_and_gpt(request: ChatRequest):
- instruction_prompt = await get_talent_prompt()  # cached after first call
-    required_keys = ["entity_id", "platform", "thread_id"]
-    for key in required_keys:
-        if key not in request.metadata:
-            return {"error": f"Missing metadata key: {key}"}
+async def chat_with_memory_and_gpt(request: ChatRequest):
+    # 1) Load system instructions (async + cached)
+    instruction_prompt = await get_talent_prompt()
 
-    # Step 1: Store to Chroma memory
+    # 2) Validate metadata
+    required_keys = ["entity_id", "platform", "thread_id"]
+    for k in required_keys:
+        if k not in request.metadata:
+            raise HTTPException(status_code=400, detail=f"Missing metadata key: {k}")
+
+    # 3) Store to memory
     try:
         memory.add_text(request.text, request.metadata)
     except Exception as e:
-        return {"error": f"Memory store failed: {str(e)}"}
+        raise HTTPException(status_code=500, detail=f"Memory store failed: {str(e)}")
 
-    # Step 2: Call GPT via v1.0 client
+    # 4) Call OpenAI (async client)
     try:
-        completion = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+        completion = await client.chat.completions.create(
+            model="gpt-3.5-turbo",  # or "gpt-4"
             messages=[
-                {
-                    "role": "system",
-                    "content": prompt
-                },
-                {
-                    "role": "user",
-                    "content": request.text
-                }
+                {"role": "system", "content": instruction_prompt},
+                {"role": "user", "content": request.text},
             ],
             temperature=0.7,
             max_tokens=500,
-            user=request.metadata["thread_id"]
+            user=request.metadata["thread_id"],
         )
-
         reply = completion.choices[0].message.content
-        return {
-            "memory": "✅ Stored successfully",
-            "reply": reply
-        }
-
+        return {"memory": "✅ Stored successfully", "reply": reply}
     except Exception as e:
-        return {
-            "memory": "✅ Stored successfully",
-            "reply": f"❌ GPT error: {str(e)}"
-        }
+        return {"memory": "✅ Stored successfully", "reply": f"❌ GPT error: {str(e)}"}
