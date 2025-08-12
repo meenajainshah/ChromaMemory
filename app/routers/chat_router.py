@@ -84,7 +84,7 @@ async def route_intent(user_text: str) -> Dict[str, str]:
         # Fail safe
         return {"intent": "general", "confidence": 0.0, "reasons": f"router_error: {str(e)}"}
 
-prompt_ver = get_prompt_version(picked_intent) or "unknown"
+
 
 def merge_metadata(incoming: Optional[Dict[str, str]]) -> Dict[str, str]:
     md = {
@@ -123,6 +123,8 @@ async def chat_with_memory_and_gpt(request: ChatRequest):
             "You are a helpful assistant. If the user asks about hiring, automation, staffing, "
             "or digital strategy, provide actionable steps, and clearly label assumptions."
         )
+
+        prompt_ver = get_prompt_version(picked_intent) or "unknown"
         routed["reasons"] += f" | prompt_fallback: {str(e)}"
 
     # 4) Store memory (include routing info so you can analyze later)
