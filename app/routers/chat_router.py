@@ -5,6 +5,7 @@ from typing import Dict, Optional
 from openai import AsyncOpenAI
 from services.chat_instructions_loader import get_prompt_for  # <-- accept intent
 from controllers.memory_controller import MemoryController
+from services.chat_instructions_loader import get_prompt_version
 import os
 
 router = APIRouter()
@@ -82,6 +83,8 @@ async def route_intent(user_text: str) -> Dict[str, str]:
     except Exception as e:
         # Fail safe
         return {"intent": "general", "confidence": 0.0, "reasons": f"router_error: {str(e)}"}
+
+prompt_ver = get_prompt_version(picked_intent) or "unknown"
 
 def merge_metadata(incoming: Optional[Dict[str, str]]) -> Dict[str, str]:
     md = {
