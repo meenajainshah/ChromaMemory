@@ -4,7 +4,7 @@ from routers.memory_router import router as memory_router
 from routers.gpt_router import router as gpt_router
 from routers.chat_router import router as chat_router
 from routers.debug_router import router as debug_router
-from services.chat_instructions_loader import warm_prompts
+
 import os, asyncio, logging
 
 
@@ -13,23 +13,19 @@ app = FastAPI()
 
 
 
-@app.on_event("startup")
-async def startup():
-    if os.getenv("PROMPT_STARTUP_WARM", "0") == "1":
-        versions = await warm_prompts()
-        logging.info({"prompt_versions": versions})
-
-
 @app.get("/")
 def root():
     return {"message": "Chroma memory + GPT API is running!"}
 
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "https://meenashah1.wixstudio.com/").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,            # e.g. https://your-wix-site.com
+    allow_credentials=False,                  # set True only if you really send cookies
+    allow_methods=["POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
+
 )
 
 # Include all routers here
