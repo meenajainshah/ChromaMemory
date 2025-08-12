@@ -32,20 +32,21 @@ PROMPT_STARTUP_WARM = os.getenv("PROMPT_STARTUP_WARM", "0") == "1"
 PROMPT_WARM_LABELS = os.getenv("PROMPT_WARM_LABELS", "hiring,automation,staffing,general").split(",")
 PROMPT_WARM_TIMEOUT = float(os.getenv("PROMPT_WARM_TIMEOUT", "2.5"))
 
+
 @app.on_event("startup")
 async def startup():
     if PROMPT_STARTUP_WARM:
-        async def _bg_warm():
+        async def _bg():
             try:
-                # never block boot; cap time
-                versions = await asyncio.wait_for(warm_prompts(PROMPT_WARM_LABELS), timeout=PROMPT_WARM_TIMEOUT)
-                logging.info({"prompt_versions": versions})
+                # do NOT block boot
+                await asyncio.wait_for(warm_prompts(PROMPT_WARM_LABELS), timeout=PROMPT_WARM_TIMEOUT)
+                logging.info("Prompt warm finished")
             except asyncio.TimeoutError:
                 logging.warning("Prompt warm timed out; will lazy-load on first request.")
             except Exception as e:
                 logging.exception("Prompt warm failed: %s", e)
+        asyncio.create_task(_bg())
 
-        asyncio.create_task(_bg_warm())  # fire-and-forget
 
 # Include all routers here
 app.include_router(memory_router)
