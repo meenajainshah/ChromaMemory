@@ -9,6 +9,7 @@ import httpx
 import hashlib
 from typing import Dict, Optional, Tuple
 from supabase import create_client, Client
+PROMPT_FETCH_MODE = os.getenv("PROMPT_FETCH_MODE", "signed")  # signed|direct
 
 # ---------- Env ----------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -94,12 +95,14 @@ async def _fetch_via_signed_url(file_path: str, ttl_sec: int = 3600) -> str:
         return _sanitize_text(r.content)
 
 async def _fetch_fresh(file_path: str) -> str:
-    """Try direct download first; fallback to signed URL."""
-    try:
-        return await _fetch_via_direct(file_path)
-    except Exception:
-        # Fall back to signed URL
-        return await _fetch_via_signed_url(file_path)
+    if PROMPT_FETCH_MODE == "direct":
+        # Supabase download() is sync; offload to a thread
+        def _dl():
+            return _supabase.storage.from_(PROMPT_BUCKET).download(file_path)
+        b = await asyncio.to_thread(_dl)
+        return _sanitize_text(b)
+    # default: non-blocking httpx via signed URL
+    return await _fetch_via_signed_url(file_path)
 
 async def _refresh(file_path: str) -> Tuple[str, str]:
     """Fetch and update caches. Returns (text, sha)."""
