@@ -19,14 +19,21 @@ logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 app = FastAPI()
 
 # ---- CORS ----
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+ALLOWED_ORIGINS = [
+  "https://meenashah1.wixstudio.com",     # editor/preview
+  "https://*.wixsite.com",                # published (Wix default)
+  "https://www.iviewlabs.com"        # your live domain (if any)
+]
+
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,  # set True only if using cookies
-    allow_methods=["POST", "OPTIONS", "GET"],
-    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
+  CORSMiddleware,
+  allow_origins=[o for o in ALLOWED_ORIGINS if "*" not in o],
+  allow_origin_regex=r"^https://([a-z0-9-]+\.)?wixsite\.com$",
+  allow_credentials=False,
+  allow_methods=["POST","OPTIONS","GET"],
+  allow_headers=["*"],
 )
+
 
 @app.get("/health")
 def health():
