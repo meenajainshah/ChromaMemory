@@ -112,71 +112,144 @@ def merge_metadata(incoming: Optional[Dict[str, str]]) -> Dict[str, str]:
 
 @router.post("/chat", dependencies=[Depends(verify_token)])
 async def chat_with_memory_and_gpt(request: ChatRequest):
-    # 1) Merge metadata safely
+    started = time.perf_counter()
+
+    # 1) merge metadata
     md = merge_metadata(request.metadata)
 
-    # 2) Decide intent
+    # 2) run router (timeboxed)
+    router_started = time.perf_counter()
     routed = {"intent": "general", "confidence": 0.0, "reasons": "not_routed"}
+    router_usage = {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None}
     if request.force_intent and request.force_intent in INTENT_LABELS:
         routed = {"intent": request.force_intent, "confidence": 1.0, "reasons": "forced"}
     elif request.auto_route:
-        routed = await route_intent(request.text)
+        try:
+            resp = await client.chat.completions.create(
+                model=ROUTER_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are an intent router..."},
+                    {"role": "user", "content": request.text},
+                ],
+                tools=[{ "type":"function", "function": {
+                    "name":"route","description":"Return intent classification",
+                    "parameters": {
+                        "type":"object",
+                        "properties":{
+                            "intent":{"type":"string","enum":INTENT_LABELS},
+                            "confidence":{"type":"number","minimum":0,"maximum":1},
+                            "reasons":{"type":"string"}
+                        },
+                        "required":["intent","confidence"]
+                    }
+                }}],
+                tool_choice={"type":"function","function":{"name":"route"}},
+                temperature=0,
+                max_tokens=100,
+            )
+            call = resp.choices[0].message.tool_calls[0]
+            args = call.function.arguments if call and call.function else "{}"
+            import json as _json
+            out = _json.loads(args or "{}")
+            routed = {
+                "intent": out.get("intent") if out.get("intent") in INTENT_LABELS else "general",
+                "confidence": float(out.get("confidence", 0.0)),
+                "reasons": out.get("reasons", "")
+            }
+            if getattr(resp, "usage", None):
+                router_usage = {
+                    "prompt_tokens": resp.usage.prompt_tokens,
+                    "completion_tokens": resp.usage.completion_tokens,
+                    "total_tokens": resp.usage.total_tokens,
+                }
+        except Exception as e:
+            routed = {"intent": "general", "confidence": 0.0, "reasons": f"router_error:{e}"}
+    router_latency_ms = int((time.perf_counter() - router_started) * 1000)
 
     picked_intent = routed["intent"] if routed["confidence"] >= CONF_THRESHOLD else "general"
 
-    # 3) Load prompt for the picked intent
+    # 3) load prompt + version
     try:
         prompt = await get_prompt_for(picked_intent)
     except Exception as e:
-        # Safe fallback if prompt retrieval fails (e.g., signed URL timeout)
-        prompt = (
-            "You are a helpful assistant. If the user asks about hiring, automation, staffing, "
-            "or digital strategy, provide actionable steps, and clearly label assumptions."
-        )
+        prompt = ("You are a helpful assistant for hiring, automation, staffing, and digital strategy. "
+                  "Prefer internal data; if unavailable, state assumptions and proceed.")
+        routed["reasons"] += f" | prompt_fallback:{e}"
 
-        prompt_ver = get_prompt_version(picked_intent) or "unknown"
-        routed["reasons"] += f" | prompt_fallback: {str(e)}"
+    from services.chat_instructions_loader import get_prompt_version
+    prompt_ver = get_prompt_version(picked_intent) or "unknown"
 
-    # 4) Store memory (include routing info so you can analyze later)
+    # 4) store memory (best-effort)
     store_md = dict(md)
     store_md.update({
         "routed_intent": routed["intent"],
         "routed_confidence": str(routed["confidence"]),
+        "prompt_version": prompt_ver,
     })
+    mem_status = "✅ Stored successfully"
     try:
         memory.add_text(request.text, store_md)
-        mem_status = "✅ Stored successfully"
     except Exception as e:
-        mem_status = f"❌ Memory store failed: {str(e)}"
+        mem_status = f"❌ Memory store failed: {e}"
 
-    # 5) Get answer from worker model using chosen prompt
+    # 5) worker call
+    worker_started = time.perf_counter()
+    reply = ""
+    worker_usage = {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None}
     try:
         completion = await client.chat.completions.create(
             model=WORKER_MODEL,
             messages=[
                 {"role": "system", "content": prompt},
-                {
-                    "role": "assistant",
-                    "content": f"(Routing note: intent={picked_intent}, conf={routed['confidence']:.2f})"
-                },
+                {"role": "assistant", "content": f"(Routing: {picked_intent}, conf={routed['confidence']:.2f}, ver={prompt_ver})"},
                 {"role": "user", "content": request.text},
             ],
             temperature=0.7,
             max_tokens=700,
             user=f"{md['entity_id']}::{md['thread_id']}",
         )
-        reply = completion.choices[0].message.content
-        return {
-            "memory": mem_status,
-            "intent": picked_intent,
-            "confidence": routed["confidence"],
-            "reply": reply,
-        }
+        reply = completion.choices[0].message.content or ""
+        if getattr(completion, "usage", None):
+            worker_usage = {
+                "prompt_tokens": completion.usage.prompt_tokens,
+                "completion_tokens": completion.usage.completion_tokens,
+                "total_tokens": completion.usage.total_tokens,
+            }
     except Exception as e:
-        return {
-            "memory": mem_status,
-            "intent": picked_intent,
-            "confidence": routed["confidence"],
-            "reply": f"❌ GPT error: {str(e)}",
-        }
+        reply = f"❌ GPT error: {e}"
+    worker_latency_ms = int((time.perf_counter() - worker_started) * 1000)
+    total_latency_ms = int((time.perf_counter() - started) * 1000)
+
+    # 6) emit one structured log line
+    jlog(
+        "chat.infer",
+        entity_id=md["entity_id"],
+        platform=md["platform"],
+        thread_id=md["thread_id"],
+        user_preview=request.text[:LOG_USER_CHARS],
+        intent_routed=routed["intent"],
+        intent_picked=picked_intent,
+        intent_confidence=round(routed["confidence"], 3),
+        prompt_version=prompt_ver,
+        router_model=ROUTER_MODEL,
+        worker_model=WORKER_MODEL,
+        router_tokens=router_usage,
+        worker_tokens=worker_usage,
+        router_latency_ms=router_latency_ms,
+        worker_latency_ms=worker_latency_ms,
+        total_latency_ms=total_latency_ms,
+        reply_preview=reply[:LOG_REPLY_CHARS],
+        mem_status=mem_status,
+    )
+
+    # 7) normal response
+    return {
+        "memory": mem_status,
+        "intent": picked_intent,
+        "confidence": routed["confidence"],
+        "prompt_version": prompt_ver,
+        "router_tokens": router_usage,
+        "worker_tokens": worker_usage,
+        "reply": reply,
+    }
 
