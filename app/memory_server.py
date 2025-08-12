@@ -6,8 +6,15 @@ from routers.chat_router import router as chat_router
 from routers.debug_router import router as debug_router
 from services.chat_instructions_loader import warm_prompts
 
-import os, asyncio, logging
+import os, asyncio, logging, sys
 
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    stream=sys.stdout,
+    level=LOG_LEVEL,
+    format="%(message)s",   # pure JSON lines from our logger below
+)
 
 
 app = FastAPI()
