@@ -6,7 +6,17 @@ from openai import AsyncOpenAI
 from services.chat_instructions_loader import get_prompt_for  # <-- accept intent
 from controllers.memory_controller import MemoryController
 from services.chat_instructions_loader import get_prompt_version
-import os
+import json, time, logging, os
+
+# routers/chat_router.py (near imports)
+
+
+LOG_USER_CHARS  = int(os.getenv("LOG_USER_CHARS", "300"))
+LOG_REPLY_CHARS = int(os.getenv("LOG_REPLY_CHARS", "300"))
+
+def jlog(event: str, **fields):
+    fields["event"] = event
+    logging.info(json.dumps(fields, ensure_ascii=False))
 
 router = APIRouter()
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
