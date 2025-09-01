@@ -1,59 +1,51 @@
-from fastapi import APIRouter
-from pydantic import BaseModel, validator
-from typing import Optional
-from controllers.memory_controller import MemoryController
-from fastapi import Header, HTTPException, Depends
-import os
+# routers/memory_router.py
+from fastapi import APIRouter, HTTPException, Header, Query
+from pydantic import BaseModel, Field
+from typing import Any, Dict, Optional, List
 
+# import the service-layer functions
+from services.memory_store import ensure_conversation as _ensure_conv, ingest_message as _ingest_msg, list_recent
 
-router = APIRouter()
-memory = MemoryController()
-#User secret key for authorization
-async def verify_token(x_api_key: str = Header(...)):
-    if x_api_key != os.getenv("WIX_SECRET_KEY"):
-        raise HTTPException(status_code=403, detail="Unauthorized")
+router = APIRouter(prefix="", tags=["memory"])
 
+# ---- Re-export for internal Python imports (inside this repo) ----
+ensure_conversation = _ensure_conv
+ingest_message = _ingest_msg
 
-class AddMemoryRequest(BaseModel):
-    text: str
-    metadata: dict
-
-    @validator('metadata')
-    def require_metadata_keys(cls, v):
-        required = ['entity_id', 'platform', 'thread_id']
-        for key in required:
-            if key not in v:
-                raise ValueError(f"Missing required metadata field: {key}")
-        return v
-
-class QueryRequest(BaseModel):
-    query: str
-    top_k: Optional[int] = 5
+class EnsureReq(BaseModel):
     entity_id: str
-    platform: Optional[str] = None
-    thread_id: Optional[str] = None
+    platform: str
+    thread_id: str
+    user_id: Optional[str] = None
+    intent_hint: Optional[str] = None
 
-@router.post("/store", dependencies=[Depends(verify_token)])
-def add_memory(request: AddMemoryRequest):
-    print("📥 Received text:", request.text)
-    print("🧠 Metadata:", request.metadata)
-    memory.add_text(request.text, request.metadata)
-    return {"message": "Memory added!"}
+@router.post("/conversations.ensure")
+def conversations_ensure(req: EnsureReq):
+    cid = ensure_conversation(req.entity_id, req.platform, req.thread_id)
+    return {"ok": True, "cid": cid}
 
-   
+class IngestReq(BaseModel):
+    cid: Optional[str] = None
+    entity_id: str
+    platform: str
+    thread_id: str
+    user_id: str
+    role: str = Field(default="user")
+    content: str
+    meta: Dict[str, Any] = Field(default_factory=dict)
 
+@router.post("/messages.ingest")
+def messages_ingest(req: IngestReq, Idempotency_Key: Optional[str] = Header(None)):
+    if req.role not in {"user","assistant","tool","system"}:
+        raise HTTPException(400, "invalid role")
+    cid = req.cid or ensure_conversation(req.entity_id, req.platform, req.thread_id)
+    idem = Idempotency_Key or f"{req.user_id}:{req.role}:{hash(req.content)}"
+    mid = ingest_message(cid, req.role, req.content, req.meta, idem)
+    return {"ok": True, "cid": cid, "mid": mid}
 
-
-@router.post("/retrieve", dependencies=[Depends(verify_token)])
-def retrieve_memory(request: QueryRequest):
-    return {
-        "results": memory.query_text(
-            request.query,
-            request.entity_id,
-            request.platform,
-            request.thread_id,
-            request.top_k
-        )
-    }
-        
-    
+@router.get("/conversations/{cid}/context")
+def conversations_context(cid: str, limit: int = Query(8, ge=1, le=20)):
+    rows = list_recent(cid, limit=limit)
+    # normalize to summaries the LLM likes (you can add real summarization later)
+    out = [{"role": r["role"], "text": r["text"], "summary": (r["text"][:400] + ("..." if len(r["text"])>400 else "")), "metadata": r.get("meta", {})} for r in rows]
+    return out
