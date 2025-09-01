@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 import uuid
 from security import require_internal_token
+from fastapi import APIRouter, Header, Depends
 
 from routers.memory_router import ensure_conversation, ingest_message
 from routers.gpt_router import run_llm_turn  # your existing LLM orchestration
