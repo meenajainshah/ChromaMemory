@@ -3,11 +3,16 @@ from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 import uuid
+from security import require_internal_token
 
 from routers.memory_router import ensure_conversation, ingest_message
 from routers.gpt_router import run_llm_turn  # your existing LLM orchestration
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(
+    prefix="/chat",
+    tags=["chat"],
+    dependencies=[Depends(require_internal_token)]  # protect this router
+)
 
 class TurnIn(BaseModel):
     cid: Optional[str] = None
