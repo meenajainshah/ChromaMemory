@@ -1,47 +1,46 @@
 # routers/chat_router.py
-from fastapi import APIRouter, Header
+import os, asyncio, uuid, json, logging
+from typing import Dict, Any, List
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional
-import uuid
-from security import require_internal_token
-from fastapi import APIRouter, Header, Depends
+
 from services.slot_extraction import extract_slots_from_turn, merge_slots
+from services.storage import ensure_conversation, ingest_message   # adjust import path to yours
+from routers.gpt_router import run_llm_turn                        # adjust if different
 
-from routers.memory_router import ensure_conversation, ingest_message
-from routers.gpt_router import run_llm_turn  # your existing LLM orchestration
+LLM_TIMEOUT_SECS = int(os.getenv("LLM_TIMEOUT_SECS", "18"))
 
-router = APIRouter(
-    prefix="/chat",
-    tags=["chat"],
-    dependencies=[Depends(require_internal_token)]  # protect this router
-)
+router = APIRouter(prefix="/chat")  # keep if clients call /chat/turn
 
+# ---- Models ----
 class TurnIn(BaseModel):
     text: str
     meta: Dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        extra = "ignore"   # if a client sends cid, ignore it silently
-
 class TurnOut(BaseModel):
     ok: bool
-    cid: UUID
+    cid: str                     # keep as str for now (no runtime UUID cast)
     text: str
     intent: str
     stage: str
-    suggestions: List[str] = []
+    suggestions: List[str] = Field(default_factory=list)
     meta: Dict[str, Any] = Field(default_factory=dict)
-    
-@router.post("/turn")
+
+# ---- Route ----
+@router.post("/turn", response_model=TurnOut)
 async def chat_turn(
-    req: "TurnIn",
+    req: TurnIn,
     entity_id: str = Header(...),
     platform: str = Header(...),
     thread_id: str = Header(...),
     user_id: str = Header(...),
     Idempotency_Key: str | None = Header(None)
 ):
-    cid = req.cid or ensure_conversation(entity_id, platform, thread_id)
+    # derive/create conversation id
+    cid = ensure_conversation(entity_id, platform, thread_id)
+    if not cid:
+        raise HTTPException(500, "ensure_conversation returned empty id")
+
     idem = Idempotency_Key or uuid.uuid4().hex
 
     # ---- slots + stage (server-side) ----
@@ -58,54 +57,68 @@ async def chat_turn(
     except Exception:
         pass
 
-     return TurnOut(
-        ok=True,
-        cid=UUID(cid_str),
-        text=reply,
-        intent=intent,
-        stage=stage,
-        suggestions=suggestions,
-        meta={"slots": slots_out}
-    )
-    # store user
-    ingest_message(
-        cid, "user", req.text,
-        {**(req.meta or {}), "entity_id":entity_id, "platform":platform,
-         "thread_id":thread_id, "user_id":user_id, "slots": slots_merged, "stage_in": stage_in},
-        f"{idem}:u"
-    )
+    # store user (best-effort)
+    try:
+        ingest_message(
+            cid, "user", req.text,
+            {
+                **(req.meta or {}),
+                "entity_id": entity_id, "platform": platform,
+                "thread_id": thread_id, "user_id": user_id,
+                "slots": slots_merged, "stage_in": stage_in
+            },
+            f"{idem}:u"
+        )
+    except Exception as e:
+        logging.warning(json.dumps({"event":"store.user.error","cid":cid,"err":str(e)}))
 
-    # LLM turn (pass merged slots + stage_out)
-    out = await run_llm_turn(
-        cid=cid, user_text=req.text,
-        entity_id=entity_id, platform=platform, thread_id=thread_id, user_id=user_id,
-        meta={**(req.meta or {}), "slots": slots_merged, "stage": stage_out}
-    )
+    # LLM turn with timeout guard
+    try:
+        out = await asyncio.wait_for(
+            run_llm_turn(
+                cid=cid, user_text=req.text,
+                entity_id=entity_id, platform=platform, thread_id=thread_id, user_id=user_id,
+                meta={**(req.meta or {}), "slots": slots_merged, "stage": stage_out}
+            ),
+            timeout=LLM_TIMEOUT_SECS
+        )
+    except asyncio.TimeoutError:
+        out = {"text": "Sorry—took too long to respond. Try again.", "intent": "hiring", "stage": stage_out}
+    except Exception as e:
+        logging.error(json.dumps({"event":"llm.error","cid":cid,"err":str(e)}))
+        out = {"text": "I hit an error processing that. Please try again.", "intent": "hiring", "stage": stage_out}
 
     reply = out.get("text") or ""
     intent = out.get("intent") or "hiring"
     stage  = out.get("stage")  or stage_out
     slots_out = out.get("slots") or slots_merged
 
-    # 🔎 one-line debug (slots + stage in/out)
+    # store assistant (best-effort)
+    try:
+        ingest_message(
+            cid, "assistant", reply,
+            {"intent": intent, "stage": stage, "slots": slots_out},
+            f"{idem}:a"
+        )
+    except Exception as e:
+        logging.warning(json.dumps({"event":"store.assistant.error","cid":cid,"err":str(e)}))
+
+    # one-line turn debug
     logging.info(json.dumps({
         "event": "turn.debug",
         "cid": cid, "thread_id": thread_id,
-        "intent": intent,
         "stage_in": stage_in, "stage_out": stage,
         "slots": slots_out,
-        "text_in": (req.text or "")[:200],
-        "text_out": reply[:200],
+        "text_in": (req.text or "")[:160],
+        "text_out": reply[:160],
     }, ensure_ascii=False))
 
-    # store assistant
-    ingest_message(cid, "assistant", reply, {"intent": intent, "stage": stage, "slots": slots_out}, f"{idem}:a")
-
-    return {
-        "ok": True, "cid": cid, "text": reply,
-        "intent": intent, "stage": stage,
-        "tool_calls": out.get("tool_calls") or [],
-        "suggestions": out.get("suggestions") or ["Share budget","Share location","Share tech stack"],
-        "meta": {"slots": slots_out}
-    }
-
+    return TurnOut(
+        ok=True,
+        cid=str(cid),
+        text=reply,
+        intent=intent,
+        stage=stage,
+        suggestions=out.get("suggestions") or ["Share budget","Share location","Share tech stack"],
+        meta={"slots": slots_out}
+    )
