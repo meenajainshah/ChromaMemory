@@ -21,6 +21,7 @@ def _norm_cur(c: Optional[str]) -> str:
     return c.upper() if c else ""
 
 # --- Budget patterns (named groups; currency can be before or after) ---
+# --- Budget patterns (currency can be before OR after the number) ---
 _BUDGET_RANGE = re.compile(r"""(?ix)
  (?P<cur1>₹|rs\.?|inr|\$|usd|eur|£)?\s*
  (?P<v1>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)\s*
@@ -44,33 +45,25 @@ _LOC_HINTS = {"remote","hybrid","onsite","on-site","work from home","wfh"}
 def budget(text: str) -> Optional[Dict[str, Any]]:
   if not text:
     return None
-
-  # normalize dashes/spaces for matching (keep original for raw slice)
-  raw = text
-  t = _norm_spaces(_DASH_RE.sub("-", text))
-
-  # also try to capture a free-form "for N months/weeks/years" period
-  m_period = re.search(r"(?i)\bfor\s+(?P<num>\d+(?:\.\d+)?)\s*(?P<u>months?|month|weeks?|week|years?|yrs?|yr|days?|day)\b", t)
-  period_ff = f"{m_period.group('num')} {m_period.group('u')}" if m_period else ""
-
-  m = _BUDGET_RANGE.search(t) or _BUDGET_SINGLE.search(t)
+  m = _BUDGET_RANGE.search(text) or _BUDGET_SINGLE.search(text)
   if not m:
     return None
-
   g = m.groupdict()
-  cur = g.get("cur1") or g.get("cur2") or ""
-  v1  = g.get("v1")
-  v2  = g.get("v2") or v1
-  unit_token = (g.get("unit") or "").lower()
-  period_tok = (g.get("period") or "").lower()
+  cur   = g.get("cur1") or g.get("cur2") or ""
+  v1    = g.get("v1")
+  v2    = g.get("v2") or v1
+  unit  = (g.get("unit") or "").lower()
+  period= (g.get("period") or "").lower()
 
-  # normalize currency & numbers
-  cur = _norm_cur(cur)
-  try:
-    v1f = _num(v1) if v1 else None
-    v2f = _num(v2) if v2 else None
-  except Exception:
-    return None
+  return {
+    "currency": _norm_cur(cur),      # will now be "$" for "20$ per hr"
+    "min": _num(v1) if v1 else None,
+    "max": _num(v2) if v2 else None,
+    "unit": unit,                    # k/m/cr/lpa/lakh…
+    "period": period,                # hr/hour/yr/pa/mo…
+    "raw": m.group(0)
+  }
+
 
   # normalize unit/period
   # unit_token is magnitude or salary unit (lpa/lakh/lac/cr/k/m). We keep "lpa" literal; others as-is.
