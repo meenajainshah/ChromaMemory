@@ -17,10 +17,21 @@ router = APIRouter(
 )
 
 class TurnIn(BaseModel):
-    cid: Optional[str] = None
     text: str
     meta: Dict[str, Any] = Field(default_factory=dict)
 
+    class Config:
+        extra = "ignore"   # if a client sends cid, ignore it silently
+
+class TurnOut(BaseModel):
+    ok: bool
+    cid: UUID
+    text: str
+    intent: str
+    stage: str
+    suggestions: List[str] = []
+    meta: Dict[str, Any] = Field(default_factory=dict)
+    
 @router.post("/turn")
 async def chat_turn(
     req: "TurnIn",
@@ -47,6 +58,15 @@ async def chat_turn(
     except Exception:
         pass
 
+     return TurnOut(
+        ok=True,
+        cid=UUID(cid_str),
+        text=reply,
+        intent=intent,
+        stage=stage,
+        suggestions=suggestions,
+        meta={"slots": slots_out}
+    )
     # store user
     ingest_message(
         cid, "user", req.text,
