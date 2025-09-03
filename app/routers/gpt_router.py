@@ -1,6 +1,6 @@
 # app/routers/gpt_router.py
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import os, re, json, asyncio
 
@@ -10,8 +10,7 @@ router = APIRouter()
 
 # ---------- Config ----------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-3.5-turbo")  # keep classic models for ChatCompletion API
-
+OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-3.5-turbo")  # classic ChatCompletion API
 openai.api_key = OPENAI_API_KEY
 
 # ---------- Public request model (kept from your file) ----------
@@ -54,7 +53,7 @@ def _infer_stage(prev: Optional[str], user_text: str) -> str:
     if prev:
         if prev == "collect":
             if any(k in t for k in ["verify","otp"]) or re.search(r"\b\d{6}\b", t): return "verify"
-            if any(k in t for k in ["remote","onsite","hybrid","ahmedabad","mumbai","delhi","india"]) and any(k in t for k in ["₹","$","lpa","budget","ctc","per month","per hour","salary"]): return "enrich"
+            if any(k in t for k in ["remote","onsite","hybrid","ahmedabad","mumbai","delhi","india","pune","bangalore"]) and any(k in t for k in ["₹","$","lpa","budget","ctc","per month","per hour","salary"]): return "enrich"
             return "collect"
         if prev == "verify":
             if "verified" in t or re.search(r"\b\d{6}\b", t): return "enrich"
@@ -68,7 +67,7 @@ def _infer_stage(prev: Optional[str], user_text: str) -> str:
         return prev
     if "schedule" in t or "interview" in t: return "schedule"
     if any(k in t for k in ["shortlist","match","recommend"]): return "match"
-    if any(k in t for k in ["remote","onsite","hybrid","ahmedabad","mumbai","delhi","india"]) and any(k in t for k in ["₹","$","lpa","budget","ctc","per month","per hour","salary"]): return "enrich"
+    if any(k in t for k in ["remote","onsite","hybrid","ahmedabad","mumbai","delhi","india","pune","bangalore"]) and any(k in t for k in ["₹","$","lpa","budget","ctc","per month","per hour","salary"]): return "enrich"
     if any(k in t for k in ["verify","otp"]) or re.search(r"\b\d{6}\b", t): return "verify"
     return "collect"
 
@@ -100,7 +99,6 @@ def _build_context(cid: str, limit: int = 8) -> str:
     return "\n".join(parts)
 
 def _sync_openai_chat(messages: List[Dict[str, str]], user: str) -> str:
-    # uses your current SDK style (sync)
     resp = openai.ChatCompletion.create(
         model=OPENAI_CHAT_MODEL,
         messages=messages,
@@ -108,6 +106,57 @@ def _sync_openai_chat(messages: List[Dict[str, str]], user: str) -> str:
         temperature=0.3
     )
     return (resp.choices[0].message["content"] or "").strip()
+
+# ---------- NEW: stage/slot-aware helpers ----------
+def _fmt_budget(b: Dict[str, Any] | None) -> str:
+    if not b: return "—"
+    cur = (b.get("currency") or "").strip()
+    unit = (b.get("unit") or "").upper()
+    if b.get("min") and b.get("max"):
+        core = f"{b['min']}-{b['max']} {unit}".strip()
+    elif b.get("min"):
+        core = f"{b['min']} {unit}".strip()
+    elif b.get("max"):
+        core = f"up to {b['max']} {unit}".strip()
+    else:
+        core = (b.get("raw") or "").strip() or "—"
+    return f"{(cur + ' ' + core).strip()}".strip()
+
+def _next_step_chips(slots: Dict[str, Any], stage: str) -> List[str]:
+    chips: List[str] = []
+    if stage == "collect":
+        if not slots.get("budget"):   chips.append("Share budget")
+        if not slots.get("location"): chips.append("Share location")
+    if stage in {"enrich", "confirm"}:
+        if not slots.get("role_title"): chips.append("Set role title")
+        if not slots.get("seniority"):  chips.append("Set seniority")
+        chips.extend(["Share tech stack", "Add must-have skills"])
+    for c in ["Share tech stack", "Add screening questions"]:
+        if c not in chips: chips.append(c)
+    seen, out = set(), []
+    for c in chips:
+        if c not in seen:
+            out.append(c); seen.add(c)
+    return out[:6]
+
+def _reply_for_collect(missing: List[str]) -> str:
+    if set(missing) == {"budget", "location"}:
+        return "Got it. What **budget range** and **location/remote preference** do you have?"
+    if "budget" in missing:
+        return "Thanks. What’s the **target budget range**?"
+    if "location" in missing:
+        return "Thanks. What’s the **location** or **remote/hybrid** preference?"
+    return "Great—share the **tech stack** and **must-have skills** next."
+
+def _reply_for_enrich(slots: Dict[str, Any]) -> str:
+    budget = _fmt_budget(slots.get("budget"))
+    loc    = slots.get("location") or "—"
+    title  = slots.get("role_title") or "the role"
+    return (
+        f"Noted: **{title}** · Budget **{budget}** · Location **{loc}**.\n\n"
+        "Next, share the **tech stack** and **must-have skills**. "
+        "Also confirm the **seniority** (e.g., junior/mid/senior)."
+    )
 
 # ---------- The function your chat_router imports ----------
 async def run_llm_turn(
@@ -121,40 +170,73 @@ async def run_llm_turn(
     meta: Dict[str, Any] | None = None
 ) -> Dict[str, Any]:
     """
-    Returns: {"text": str, "intent": str, "stage": str, "tool_calls": list, "suggestions": list}
+    Returns: {"text": str, "intent": str, "stage": str, "tool_calls": list, "suggestions": list, "slots": dict}
     """
     meta = meta or {}
+    slots: Dict[str, Any] = meta.get("slots") or {}
+
+    # Use provided stage if present; otherwise fallback to your inference
     intent = _infer_intent(user_text, meta)
-    prev_stage = meta.get("stage")
-    stage = _infer_stage(prev_stage, user_text)
+    stage_hint = (meta.get("stage") or "").lower() if meta.get("stage") else None
+    inferred_stage = _infer_stage(stage_hint, user_text)
+    stage = (stage_hint or inferred_stage or "collect").lower()
+
+    # What’s missing to advance out of 'collect'?
+    missing: List[str] = []
+    if not slots.get("budget"):   missing.append("budget")
+    if not slots.get("location"): missing.append("location")
+
+    # Build prompt + context
     prompt_md = _load_prompt(intent, stage)
     ctx = _build_context(cid, limit=8)
 
-    system_text = (
-        "You are Talent Sourcer GPT. Follow the policy and instructions.\n"
-        f"---POLICY & INSTRUCTIONS---\n{prompt_md}\n"
-        "Ask only the next required info to advance the stage."
+    # Give the model explicit control context so it doesn't re-ask for known slots
+    control_block = (
+        "You are Talent Sourcer GPT.\n"
+        "Follow the policy, honor the known slots, and ask ONLY for the next missing info.\n"
+        f"STAGE: {stage}\n"
+        f"SLOTS_JSON: {json.dumps(slots, ensure_ascii=False)}\n"
+        f"MISSING: {missing}\n"
+        "If stage is 'collect' and MISSING is empty, advance to 'enrich' and ask for stack/skills/seniority.\n"
+        "If stage is not 'collect', do not ask for budget/location again—confirm known values and move forward.\n"
     )
 
-    # Message list for ChatCompletion API (your current SDK style)
     messages = [
-        {"role": "system", "content": system_text},
+        {"role": "system", "content": control_block},
+        {"role": "system", "content": f"---POLICY & INSTRUCTIONS---\n{prompt_md}"},
         {"role": "system", "content": f"CONTEXT:\n{ctx}"},
         {"role": "user", "content": user_text}
     ]
 
-    # Default fallback if API key missing or call fails
-    text = "Great — to begin, please share your budget range and preferred location/remote mode."
+    # Default deterministic reply (used when key missing or API fails)
+    text: Optional[str] = None
+    next_stage = stage
+
     if OPENAI_API_KEY:
         try:
-            # Run in a thread so we don't block the event loop
             text = await asyncio.to_thread(_sync_openai_chat, messages, user_id)
-            if not text:
-                text = "Great — to begin, please share your budget range and preferred location/remote mode."
+            text = text or ""
         except Exception:
-            pass
+            text = None
 
-    # Optional lightweight tool-call protocol: parse trailing TOOLS: [...]
+    if not text:
+        # No model reply? Fall back to deterministic flow that respects stage/slots
+        if stage == "collect" and missing:
+            text = _reply_for_collect(missing)
+            next_stage = "collect"
+        else:
+            text = _reply_for_enrich(slots)
+            next_stage = "enrich"
+    else:
+        # Decide next stage even if model responded
+        next_stage = "collect" if (stage == "collect" and missing) else "enrich"
+
+        # Safety nudge: if model still asks for budget/location while we already have them, rewrite to enrich prompt
+        low = text.lower()
+        if (stage != "collect" or not missing) and (("budget" in low and slots.get("budget")) or ("location" in low and slots.get("location"))):
+            text = _reply_for_enrich(slots)
+
+    # Optional lightweight tool-call protocol
     tool_calls: List[Dict[str, Any]] = []
     m = re.search(r"TOOLS:\s*(\[.*\])", text, flags=re.I | re.S)
     if m:
@@ -164,5 +246,13 @@ async def run_llm_turn(
         except Exception:
             tool_calls = []
 
-    suggestions = meta.get("suggestions") or ["Share budget", "Share location", "Share tech stack"]
-    return {"text": text, "intent": intent, "stage": stage, "tool_calls": tool_calls, "suggestions": suggestions}
+    suggestions = _next_step_chips(slots, next_stage)
+
+    return {
+        "text": text,
+        "intent": intent,
+        "stage": next_stage,
+        "slots": slots,
+        "tool_calls": tool_calls,
+        "suggestions": suggestions
+    }
