@@ -5,7 +5,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from services.slot_extraction import extract_slots_from_turn, merge_slots
-from services.storage import ensure_conversation, ingest_message   # adjust import path to yours
+from routers.memory_router import ensure_conversation, ingest_message # adjust import path to yours
 from routers.gpt_router import run_llm_turn                        # adjust if different
 
 LLM_TIMEOUT_SECS = int(os.getenv("LLM_TIMEOUT_SECS", "18"))
