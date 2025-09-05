@@ -106,7 +106,43 @@ def _sync_openai_chat(messages: List[Dict[str, str]], user: str) -> str:
         temperature=0.3
     )
     return (resp.choices[0].message["content"] or "").strip()
+def _slots_to_summary(slots: Dict[str, Any]) -> str:
+    if not slots: return "none"
+    parts = []
+    b = slots.get("budget")
+    if isinstance(b, dict):
+        rng = ""
+        if b.get("min") is not None and b.get("max") is not None:
+            rng = f"{b['min']}-{b['max']}"
+        elif b.get("min") is not None:
+            rng = f"{b['min']}"
+        cur = (b.get("currency") or "").strip()
+        unit = (b.get("unit") or "").strip()
+        per  = (b.get("period") or "").strip()
+        disp = " ".join(x for x in [cur + rng if cur else rng, unit, f"per {per}" if per else ""] if x).strip()
+        parts.append(f"budget={disp or 'set'}")
+    loc = slots.get("location")
+    if loc: parts.append(f"location={loc}")
+    rt  = slots.get("role_title")
+    if rt: parts.append(f"role_title={rt}")
+    sr  = slots.get("seniority")
+    if sr: parts.append(f"seniority={sr}")
+    return ", ".join(parts) or "none"
 
+def _missing_from_slots(slots: Dict[str, Any]) -> list[str]:
+    missing = []
+    if not slots.get("budget"):
+        missing.append("budget")
+    if not slots.get("location"):
+        missing.append("location/remote")
+    if not slots.get("role_title"):
+        missing.append("role title")
+    if not slots.get("seniority"):
+        missing.append("seniority")
+    # add “tech stack” if you don’t extract it via regex
+    if not slots.get("stack"):
+        missing.append("tech stack")
+    return missing
 # ---------- NEW: stage/slot-aware helpers ----------
 def _fmt_budget(b: Dict[str, Any] | None) -> str:
     if not b: return "—"
@@ -169,90 +205,61 @@ async def run_llm_turn(
     user_id: str,
     meta: Dict[str, Any] | None = None
 ) -> Dict[str, Any]:
-    """
-    Returns: {"text": str, "intent": str, "stage": str, "tool_calls": list, "suggestions": list, "slots": dict}
-    """
     meta = meta or {}
-    slots: Dict[str, Any] = meta.get("slots") or {}
+    slots = meta.get("slots") or {}
 
-    # Use provided stage if present; otherwise fallback to your inference
-    intent = _infer_intent(user_text, meta)
-    stage_hint = (meta.get("stage") or "").lower() if meta.get("stage") else None
-    inferred_stage = _infer_stage(stage_hint, user_text)
-    stage = (stage_hint or inferred_stage or "collect").lower()
+    # Stage derived from SLOTS, not only current text
+    if slots.get("budget") and slots.get("location"):
+        stage = "enrich"
+    else:
+        stage = "collect"
 
-    # What’s missing to advance out of 'collect'?
-    missing: List[str] = []
-    if not slots.get("budget"):   missing.append("budget")
-    if not slots.get("location"): missing.append("location")
+    # Build prompt with KNOWN + MISSING so the model won’t ask again
+    missing = _missing_from_slots(slots)
+    known_summary = _slots_to_summary(slots)
 
-    # Build prompt + context
-    prompt_md = _load_prompt(intent, stage)
+    prompt_md = (
+        f"# POLICY\n"
+        f"- Be concise. Ask ONLY for what is missing.\n"
+        f"- NEVER ask again for fields already provided.\n\n"
+        f"# CURRENT STATE\n"
+        f"- Stage: {stage}\n"
+        f"- Known: {known_summary}\n"
+        f"- Missing: {', '.join(missing) if missing else 'none'}\n\n"
+        f"# GOAL\n"
+        f"- If Missing is empty, move forward (enrich/match) based on the role.\n"
+        f"- Otherwise, ask for the top 1–2 missing items.\n"
+        f"- Start with a one-line “Noted …” summary when new info is provided.\n"
+    )
+
     ctx = _build_context(cid, limit=8)
-
-    # Give the model explicit control context so it doesn't re-ask for known slots
-    control_block = (
-        "You are Talent Sourcer GPT.\n"
-        "Follow the policy, honor the known slots, and ask ONLY for the next missing info.\n"
-        f"STAGE: {stage}\n"
-        f"SLOTS_JSON: {json.dumps(slots, ensure_ascii=False)}\n"
-        f"MISSING: {missing}\n"
-        "If stage is 'collect' and MISSING is empty, advance to 'enrich' and ask for stack/skills/seniority.\n"
-        "If stage is not 'collect', do not ask for budget/location again—confirm known values and move forward.\n"
+    system_text = (
+        "You are Talent Sourcer GPT. Follow the policy and instructions.\n"
+        f"---POLICY & INSTRUCTIONS---\n{prompt_md}\n"
+        "Respond in 1–2 short sentences."
     )
 
     messages = [
-        {"role": "system", "content": control_block},
-        {"role": "system", "content": f"---POLICY & INSTRUCTIONS---\n{prompt_md}"},
+        {"role": "system", "content": system_text},
         {"role": "system", "content": f"CONTEXT:\n{ctx}"},
         {"role": "user", "content": user_text}
     ]
 
-    # Default deterministic reply (used when key missing or API fails)
-    text: Optional[str] = None
-    next_stage = stage
-
+    text = "Thanks—what’s the target budget and location/remote preference?"
     if OPENAI_API_KEY:
         try:
             text = await asyncio.to_thread(_sync_openai_chat, messages, user_id)
-            text = text or ""
         except Exception:
-            text = None
+            pass
 
-    if not text:
-        # No model reply? Fall back to deterministic flow that respects stage/slots
-        if stage == "collect" and missing:
-            text = _reply_for_collect(missing)
-            next_stage = "collect"
-        else:
-            text = _reply_for_enrich(slots)
-            next_stage = "enrich"
-    else:
-        # Decide next stage even if model responded
-        next_stage = "collect" if (stage == "collect" and missing) else "enrich"
+    # Suggestions based on what's still missing
+    sug = []
+    if "budget" in missing:   sug.append("Share budget")
+    if "location/remote" in missing: sug.append("Share location")
+    if "tech stack" in missing: sug.append("Share tech stack")
+    if "seniority" in missing: sug.append("Set seniority")
+    if "role title" in missing: sug.append("Set role title")
+    if not sug:  # nothing missing → enrich path
+        sug = ["Add must-have skills", "Add screening questions", "Ask for sample JD"]
 
-        # Safety nudge: if model still asks for budget/location while we already have them, rewrite to enrich prompt
-        low = text.lower()
-        if (stage != "collect" or not missing) and (("budget" in low and slots.get("budget")) or ("location" in low and slots.get("location"))):
-            text = _reply_for_enrich(slots)
-
-    # Optional lightweight tool-call protocol
-    tool_calls: List[Dict[str, Any]] = []
-    m = re.search(r"TOOLS:\s*(\[.*\])", text, flags=re.I | re.S)
-    if m:
-        try:
-            tool_calls = json.loads(m.group(1))
-            text = text[:m.start()].rstrip()
-        except Exception:
-            tool_calls = []
-
-    suggestions = _next_step_chips(slots, next_stage)
-
-    return {
-        "text": text,
-        "intent": intent,
-        "stage": next_stage,
-        "slots": slots,
-        "tool_calls": tool_calls,
-        "suggestions": suggestions
-    }
+    return {"text": text, "intent": "hiring", "stage": stage, "tool_calls": [], "suggestions": sug, "slots": slots}
