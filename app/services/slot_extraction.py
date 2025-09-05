@@ -93,6 +93,12 @@ def budget(text: str) -> Optional[Dict[str, Any]]:
     # INR default if unit implies INR and currency missing
     if not cur and unit_norm in {"lpa","lac","lakh","lakhs","cr","crore"}:
         cur = "₹"
+    # services/slot_extraction.py – inside budget() before return
+    # normalize thousands/millions
+    if unit_norm == "k" and v1f is not None: v1f *= 1_000
+    if unit_norm == "k" and v2f is not None: v2f *= 1_000
+    if unit_norm in {"m"} and v1f is not None: v1f *= 1_000_000
+    if unit_norm in {"m"} and v2f is not None: v2f *= 1_000_000
 
     return {
         "currency": cur,
