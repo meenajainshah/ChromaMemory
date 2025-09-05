@@ -22,78 +22,86 @@ def _norm_cur(c: Optional[str]) -> str:
 
 # --- Budget patterns (named groups; currency can be before or after) ---
 # --- Budget patterns (currency can be before OR after the number) ---
+# --- Budget patterns (currency can be before OR after; strong word boundaries) ---
 _BUDGET_RANGE = re.compile(r"""(?ix)
  (?P<cur1>₹|rs\.?|inr|\$|usd|eur|£)?\s*
  (?P<v1>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)\s*
  (?:-|to|–|—|~)\s*
  (?P<v2>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)\s*
  (?P<cur2>₹|\$|€|£)?\s*
- (?P<unit>k|m|cr|crore|lpa|lac|lakh|lakhs)?\s*
- (?:/|per)?\s*(?P<period>mo|month|hr|hour|yr|year|annum|pa|day|d)?
+ (?P<unit>\b(?:k|m|cr|crore|lpa|lac|lakh|lakhs)\b)?     # ← unit must end at a word boundary
+ \s*
+ (?P<per>(?:/|per))?\s*                                 # capture if '/ or per' was present
+ (?P<period>\b(?:mo|month|hr|hour|yr|year|annum|pa|day|d)\b)?
 """)
 
 _BUDGET_SINGLE = re.compile(r"""(?ix)
  (?P<cur1>₹|rs\.?|inr|\$|usd|eur|£)?\s*
  (?P<v1>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)\s*
  (?P<cur2>₹|\$|€|£)?\s*
- (?P<unit>k|m|cr|crore|lpa|lac|lakh|lakhs)?\s*
- (?:/|per)?\s*(?P<period>mo|month|hr|hour|yr|year|annum|pa|day|d)?
+ (?P<unit>\b(?:k|m|cr|crore|lpa|lac|lakh|lakhs)\b)?     # ← word boundary to avoid stealing 'm' from 'months'
+ \s*
+ (?P<per>(?:/|per))?\s*
+ (?P<period>\b(?:mo|month|hr|hour|yr|year|annum|pa|day|d)\b)?
 """)
 
 _LOC_HINTS = {"remote","hybrid","onsite","on-site","work from home","wfh"}
 
 def budget(text: str) -> Optional[Dict[str, Any]]:
-  if not text:
-    return None
-  m = _BUDGET_RANGE.search(text) or _BUDGET_SINGLE.search(text)
-  if not m:
-    return None
-  g = m.groupdict()
-  cur   = g.get("cur1") or g.get("cur2") or ""
-  v1    = g.get("v1")
-  v2    = g.get("v2") or v1
-  unit  = (g.get("unit") or "").lower()
-  period= (g.get("period") or "").lower()
+    if not text:
+        return None
 
-  return {
-    "currency": _norm_cur(cur),      # will now be "$" for "20$ per hr"
-    "min": _num(v1) if v1 else None,
-    "max": _num(v2) if v2 else None,
-    "unit": unit,                    # k/m/cr/lpa/lakh…
-    "period": period,                # hr/hour/yr/pa/mo…
-    "raw": m.group(0)
-  }
+    raw_text = text
+    m = _BUDGET_RANGE.search(text) or _BUDGET_SINGLE.search(text)
+    if not m:
+        return None
 
+    g = m.groupdict()
+    cur = (g.get("cur1") or g.get("cur2") or "").strip()
+    v1  = g.get("v1")
+    v2  = g.get("v2") or v1
+    unit_token  = (g.get("unit")   or "").lower()
+    period_tok  = (g.get("period") or "").lower()
+    per_marker  = (g.get("per")    or "").lower()   # "/" or "per" if present
+    raw_span    = m.group(0)
 
-  # normalize unit/period
-  # unit_token is magnitude or salary unit (lpa/lakh/lac/cr/k/m). We keep "lpa" literal; others as-is.
-  unit_norm = "lpa" if unit_token in {"lpa"} else unit_token
+    # ↘️ Guard: if NO currency and NO salary unit, and there IS a time period but WITHOUT '/ or per',
+    # treat as duration mention, not salary (e.g., "for 6 months")
+    if not cur and not unit_token and period_tok and ("per" not in raw_span.lower() and "/" not in raw_span):
+        return None
 
-  if period_tok in {"hr","hour"}:
-    period_norm = "hour"
-  elif period_tok in {"mo","month"}:
-    period_norm = "month"
-  elif period_tok in {"yr","year","annum","pa"}:
-    period_norm = "year"
-  elif period_tok in {"day","d"}:
-    period_norm = "day"
-  else:
-    period_norm = ""
+    cur = _norm_cur(cur)
+    try:
+        v1f = _num(v1) if v1 else None
+        v2f = _num(v2) if v2 else None
+    except Exception:
+        return None
 
-  # prefer explicit "/ per" period; else fallback to free-form "for N months"
-  period_out = period_norm or period_ff
+    # Normalize unit and period
+    unit_norm = unit_token  # keep as seen; you already handle lpa/lakh/cr elsewhere if needed
+    if period_tok in {"hr","hour"}:
+        period_norm = "hour"
+    elif period_tok in {"mo","month"}:
+        period_norm = "month"
+    elif period_tok in {"yr","year","annum","pa"}:
+        period_norm = "year"
+    elif period_tok in {"day","d"}:
+        period_norm = "day"
+    else:
+        period_norm = ""
 
-  # reconstruct raw span from original
-  raw_span = raw[m.start():m.end()]
+    # INR default if unit implies INR and currency missing
+    if not cur and unit_norm in {"lpa","lac","lakh","lakhs","cr","crore"}:
+        cur = "₹"
 
-  return {
-    "currency": cur,
-    "min": v1f,
-    "max": v2f,
-    "unit": unit_norm,   # "lpa", "lac", "lakh", "cr", "k", "m" (as seen), or ""
-    "period": period_out,  # "hour" / "month" / "year" / "day" or "6 months", etc.
-    "raw": raw_span.strip()
-  }
+    return {
+        "currency": cur,
+        "min": v1f,
+        "max": v2f,
+        "unit": unit_norm,
+        "period": period_norm,
+        "raw": raw_span.strip()
+    }
 
 def location(text: str) -> Optional[str]:
   if not text: return None
