@@ -24,28 +24,58 @@ def _norm_cur(c: Optional[str]) -> str:
 # --- Budget patterns (currency can be before OR after the number) ---
 # --- Budget patterns (currency can be before OR after; strong word boundaries) ---
 _BUDGET_RANGE = re.compile(r"""(?ix)
- (?P<cur1>₹|rs\.?|inr|\$|usd|eur|£)?\s*
- (?P<v1>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)\s*
- (?:-|to|–|—|~)\s*
- (?P<v2>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)\s*
- (?P<cur2>₹|\$|€|£)?\s*
- (?P<unit>\b(?:k|m|cr|crore|lpa|lac|lakh|lakhs)\b)?     # ← unit must end at a word boundary
+ (?P<cur>₹|rs\.?|inr|\$|usd|eur|£)?
  \s*
- (?P<per>(?:/|per))?\s*                                 # capture if '/ or per' was present
- (?P<period>\b(?:mo|month|hr|hour|yr|year|annum|pa|day|d)\b)?
+ (?P<min>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)
+ \s*(?:-|to|–|—|~)\s*
+ (?P<max>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)      # max
+ (?P<unit>k|m|cr|crore|lpa|lac|lakh|lakhs)?          # unit directly after max is OK
+ (?:\s*(?:/|per)\s*(?P<period>mo|month|hr|hour|yr|year|annum|pa))?
 """)
 
 _BUDGET_SINGLE = re.compile(r"""(?ix)
- (?P<cur1>₹|rs\.?|inr|\$|usd|eur|£)?\s*
- (?P<v1>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)\s*
- (?P<cur2>₹|\$|€|£)?\s*
- (?P<unit>\b(?:k|m|cr|crore|lpa|lac|lakh|lakhs)\b)?     # ← word boundary to avoid stealing 'm' from 'months'
+ (?P<cur>₹|rs\.?|inr|\$|usd|eur|£)?
  \s*
- (?P<per>(?:/|per))?\s*
- (?P<period>\b(?:mo|month|hr|hour|yr|year|annum|pa|day|d)\b)?
+ (?P<min>\d{1,3}(?:[,\s]\d{3})*|\d+(?:\.\d+)?)
+ (?P<unit>k|m|cr|crore|lpa|lac|lakh|lakhs)?
+ (?:\s*(?:/|per)\s*(?P<period>mo|month|hr|hour|yr|year|annum|pa))?
 """)
 
 _LOC_HINTS = {"remote","hybrid","onsite","on-site","work from home","wfh"}
+
+_ROLE_KEYWORDS = [
+  "engineer","developer","designer","manager","analyst","architect","scientist",
+  "tester","qa","sre","devops","backend","frontend","full stack","full-stack",
+  "data engineer","data scientist","product manager","project manager"
+]
+
+def role_title(text: str) -> Optional[str]:
+    if not text: return None
+    t = text.lower()
+
+    # 1) “need/looking for/hiring <role> (in|at|for …)” — stop before budget/duration
+    m = re.search(r"(?:need|looking\s+for|hiring)\s+(?:an?\s+|the\s+)?([a-z][a-z0-9\-\s]{2,40})(?=\s+(?:in|at|for)\b|$)", t)
+    if m:
+        cand = m.group(1).strip()
+        # trim tail like “for 15lpa”, “for 6 months”
+        cand = re.sub(r"\s+(?:for|at)\s+.*$", "", cand).strip()
+        if not re.match(r"^\d", cand):
+            return cand
+
+    # 2) “<role> in <city>” — ignore if the supposed role looks like money/duration
+    m = re.search(r"\b([a-z][a-z0-9\-\s]{2,40})\s+(?:in|at)\s+[a-z][a-z\-\s]{2,40}", t)
+    if m:
+        cand = m.group(1).strip()
+        if not re.search(r"\b(lpa|rs|inr|\$|\d|month|mo|yr|year|hour|hr)\b", cand):
+            return cand
+
+    # 3) keyword heuristic — pick first plausible phrase ending in a known role word
+    for kw in _ROLE_KEYWORDS:
+        m = re.search(rf"\b([a-z][a-z0-9\-\s]{{0,30}}{re.escape(kw)})\b", t)
+        if m: 
+            return m.group(1).strip()
+
+    return None
 
 def budget(text: str) -> Optional[Dict[str, Any]]:
     if not text:
