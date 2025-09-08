@@ -7,7 +7,6 @@ from services.stage_machine import (
     next_stage,
     advance_until_stable,
 )
-
 # ---------- missing_for_stage ----------
 
 def test_missing_collect_blank():

@@ -59,26 +59,26 @@ _TECH_KEYWORDS = [
 
 # ----------- extractors -----------
 def budget(text: str) -> Optional[Dict[str, Any]]:
-    if not text: return None
-    s = _DASH_RE.sub("-", text)
+    if not text:
+        return None
 
-    m = _BUDGET_RANGE.search(s) or _BUDGET_SINGLE.search(s)
+    # normalize fancy dashes to a simple hyphen (e.g. 18–22 → 18-22)
+    text = _DASH_RE.sub("-", text)
+
+    m = _BUDGET_RANGE.search(text) or _BUDGET_SINGLE.search(text)
     if not m:
-        # guard: “for 6 months” / “for 3 mo” etc — duration only, not salary
-        if re.search(r"\bfor\s+\d+\s*(months?|mos?|mo|yrs?|years?|weeks?|days?)\b", s, re.I):
-            return None
         return None
 
     g = m.groupdict()
-    cur = (g.get("cur1") or g.get("cur2") or "").strip()
-    v1  = g.get("v1")
-    v2  = g.get("v2") or v1
-    unit = (g.get("unit") or "").lower()
-    period = (g.get("period") or "").lower()
-    raw_span = m.group(0)
+    cur = (g.get("cur") or "").strip()
+    v1  = g.get("min")
+    v2  = g.get("max") or v1
+    unit_token  = (g.get("unit")   or "").lower()
+    period_tok  = (g.get("period") or "").lower()
+    raw_span    = m.group(0)
 
-    # another guard: if period is present but no "/" or "per" in the raw span AND no currency/unit ⇒ probably duration
-    if period and not re.search(r"(/|per)", raw_span, re.I) and not cur and unit == "":
+    # If we see a time period but NO currency/unit and no explicit "per", treat as duration, not salary
+    if not cur and not unit_token and period_tok and ("per" not in raw_span.lower() and "/" not in raw_span):
         return None
 
     cur = _norm_cur(cur)
@@ -88,32 +88,35 @@ def budget(text: str) -> Optional[Dict[str, Any]]:
     except Exception:
         return None
 
-    # normalize unit scale
-    if unit == "k":
-        if v1f is not None: v1f *= 1_000
-        if v2f is not None: v2f *= 1_000
-    if unit == "m":
-        if v1f is not None: v1f *= 1_000_000
-        if v2f is not None: v2f *= 1_000_000
+    # normalize unit shorthands
+    if period_tok in {"hr","hour"}:
+        period_norm = "hour"
+    elif period_tok in {"mo","month"}:
+        period_norm = "month"
+    elif period_tok in {"yr","year","annum","pa"}:
+        period_norm = "year"
+    else:
+        period_norm = ""
 
-    # INR default if LPA/lakh/crore given without currency
-    if not cur and unit in {"lpa","lac","lakh","lakhs","cr","crore"}:
+    # default INR symbol if unit implies INR and currency missing
+    if not cur and unit_token in {"lpa","lac","lakh","lakhs","cr","crore"}:
         cur = "₹"
 
-    # normalize period tokens
-    if period in {"hr","hour"}: period = "hour"
-    elif period in {"mo","month"}: period = "month"
-    elif period in {"yr","year","annum","pa"}: period = "year"
-    elif period in {"d","day"}: period = "day"
-    else: period = ""
+    # scale k/m
+    if unit_token == "k":
+        if v1f is not None: v1f *= 1_000
+        if v2f is not None: v2f *= 1_000
+    if unit_token == "m":
+        if v1f is not None: v1f *= 1_000_000
+        if v2f is not None: v2f *= 1_000_000
 
     return {
         "currency": cur,
         "min": v1f,
         "max": v2f,
-        "unit": unit,
-        "period": period,
-        "raw": _norm_spaces(raw_span),
+        "unit": unit_token,
+        "period": period_norm,
+        "raw": raw_span.strip(),
     }
 
 def location(text: str) -> Optional[str]:
@@ -179,21 +182,39 @@ def stack(text: str) -> Optional[str]:
 
 def extract_slots_from_turn(text: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
+
+    # budget
     try:
-        b = budget(text);        if b: out["budget"] = b
-    except Exception: pass
+        b = budget(text)
+    except Exception:
+        b = None
+    if b:
+        out["budget"] = b
+
+    # location
     try:
-        loc = location(text);    if loc: out["location"] = loc
-    except Exception: pass
+        loc = location(text)
+    except Exception:
+        loc = None
+    if loc:
+        out["location"] = loc
+
+    # role_title
     try:
-        rt = role_title(text);   if rt: out["role_title"] = rt
-    except Exception: pass
+        rt = role_title(text)
+    except Exception:
+        rt = None
+    if rt:
+        out["role_title"] = rt
+
+    # seniority
     try:
-        sr = seniority(text);    if sr: out["seniority"] = sr
-    except Exception: pass
-    try:
-        st = stack(text);        if st: out["stack"] = st
-    except Exception: pass
+        sr = seniority(text)
+    except Exception:
+        sr = None
+    if sr:
+        out["seniority"] = sr
+
     return out
 
 def smart_merge_slots(existing: Dict[str, Any], new: Dict[str, Any], user_text: str = "") -> Dict[str, Any]:
