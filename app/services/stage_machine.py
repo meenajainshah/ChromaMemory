@@ -8,7 +8,7 @@ STAGES = ["collect", "enrich", "match", "schedule", "close"]
 REQUIRED: Dict[str, List[str]] = {
     # minimally know WHAT we're hiring (you can add location/budget here if you want to
     # gate collect more strictly)
-    "collect": ["role_title","location", "budget"],
+    "collect": ["role_title"],
 
     # fill in job details before we can start matching
     "enrich":  ["budget", "location", "seniority", "stack"],
@@ -80,13 +80,15 @@ def next_stage(current: str, slots: Dict[str, Any]) -> str:
     return NEXT.get(cur, "collect")
 
 # public: hop across multiple stages in one turn when nothing is missing
-def advance_until_stable(stage_in: str, slots: Dict[str, Any], max_hops: int = 4) -> str:
-    stage = stage_in if stage_in in STAGES else "collect"
-    for _ in range(max_hops):
-        if missing_for_stage(stage, slots):
-            break
-        nxt = NEXT.get(stage, stage)
-        if nxt == stage:
-            break
-        stage = nxt
-    return stage
+
+def advance_until_stable(current: str, slots: Dict[str, Any]) -> str:
+    seen = set()
+    cur = current if current in STAGES else "collect"
+    while True:
+        if cur in seen:             # safety
+            return cur
+        seen.add(cur)
+        nxt = next_stage(cur, slots)
+        if nxt == cur:
+            return cur
+        cur = nxt
