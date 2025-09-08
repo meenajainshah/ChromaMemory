@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 from services.slot_extraction import extract_slots_from_turn, merge_slots
 from services.stage_machine import missing_for_stage, next_stage, advance_until_stable
 from services.ask_builder import build_reply
-from services.memory_store import list_recent            # for last_slots_for_cid()
+from services.memory_store import list_recent  
+from services.rewriter import rewrite
+from services.rewriter import rewrite
 from routers.memory_router import ensure_conversation, ingest_message
 from routers.gpt_router import run_llm_turn              # only for optional rewrite
 
@@ -101,20 +103,18 @@ async def chat_turn(
     det_text, chips = build_reply(ask_stage, missing_now, slots_merged)
     reply_text = det_text
     if USE_LLM_REWRITE and det_text:
-        try:
-            out = await asyncio.wait_for(
-                run_llm_turn(
-                    cid=cid, user_text=det_text,
-                    entity_id=entity_id, platform=platform, thread_id=thread_id, user_id=user_id,
-                    meta={"stage": stage_in, "slots": slots_merged, "mode":"rewrite"}
-                ),
-                timeout=LLM_TIMEOUT_SECS
-            )
-            reply_text = out.get("text") or det_text
-        except Exception as e:
-            logging.warning(json.dumps({"event":"rewrite.skip","cid":cid,"err":str(e)}))
-            reply_text = det_text
-
+    try:
+        policy_snippet = await get_prompt_for("hiring")  # or intent label
+    except Exception:
+        policy_snippet = None
+    try:
+        reply_text = await asyncio.wait_for(
+            rewrite(det_text, tone="concise, friendly", policy=policy_snippet),
+            timeout=LLM_TIMEOUT_SECS
+        )
+    except Exception as e:
+        logging.warning(json.dumps({"event":"rewrite.skip","cid":cid,"err":str(e)}))
+        reply_text = det_text
     # 6) store assistant (best-effort)
     try:
         ingest_message(
