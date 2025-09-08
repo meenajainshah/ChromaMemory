@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from services.slot_extraction import extract_slots_from_turn, merge_slots
-from services.stage_machine import missing_for_stage, advance_until_stable
+from services.stage_machine import missing_for_stage, next_stage, advance_until_stable
 from services.ask_builder import build_reply
 from services.memory_store import list_recent            # for last_slots_for_cid()
 from routers.memory_router import ensure_conversation, ingest_message
@@ -67,8 +67,16 @@ async def chat_turn(
     turn_slots   = extract_slots_from_turn(req.text or "")
     slots_merged = merge_slots(slots_in, turn_slots)
 
-    stage_final  = advance_until_stable(stage_in, slots_merged)
-    missing_now  = missing_for_stage(stage_final, slots_merged)
+    # 2) Decide what to ASK FOR (single hop)
+    stage_next   = next_stage(stage_in, slots_merged)      # single-step decision
+    ask_stage    = stage_next if stage_next != stage_in else stage_in
+    missing_now  = missing_for_stage(ask_stage, slots_merged)
+    
+    # 3) Decide what to STORE as the final stage (you can still allow multi-hop)
+    stage_final  = advance_until_stable(stage_in, slots_merged)  # or just use stage_next
+    
+    # 4) Build reply from ask_stage or stage_final—pick one policy and be consistent:
+   
 
     # 3) compute missing + final stage (deterministic FSM)
    # missing_now = missing_for_stage(stage_in, slots_merged)
@@ -90,7 +98,7 @@ async def chat_turn(
         logging.warning(json.dumps({"event":"store.user.error","cid":cid,"err":str(e)}))
 
     # 5) build deterministic reply; optionally rewrite with LLM for tone
-    det_text, chips = build_reply(stage_in, missing_now, turn_slots)
+    det_text, chips = build_reply(ask_stage, missing_now, slots_merged)
     reply_text = det_text
     if USE_LLM_REWRITE and det_text:
         try:
