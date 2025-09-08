@@ -108,7 +108,7 @@ async def chat_turn(
         logging.warning(json.dumps({"event":"store.user.error","cid":cid,"err":str(e)}))
 
     # 5) build deterministic reply; optional rewrite for tone ONLY
-    det_text, chips = build_reply(ask_stage, missing_now, turn_slots)  # acknowledge only what changed this turn
+    det_text, chips = build_reply(ask_stage, missing_now, turn_slots, prev_slots=slots_in) # acknowledge only what changed this turn
     reply_text = det_text
 
     if USE_LLM_REWRITE and det_text:
