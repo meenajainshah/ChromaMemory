@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from services.slot_extraction import extract_slots_from_turn, merge_slots
-from services.stage_machine import missing_for_stage, next_stage
+from services.stage_machine import missing_for_stage, advance_until_stable
 from services.ask_builder import build_reply
 from services.memory_store import list_recent            # for last_slots_for_cid()
 from routers.memory_router import ensure_conversation, ingest_message
@@ -67,9 +67,12 @@ async def chat_turn(
     turn_slots   = extract_slots_from_turn(req.text or "")
     slots_merged = merge_slots(slots_in, turn_slots)
 
+    stage_final  = advance_until_stable(stage_in, slots_merged)
+    missing_now  = missing_for_stage(stage_final, slots_merged)
+
     # 3) compute missing + final stage (deterministic FSM)
-    missing_now = missing_for_stage(stage_in, slots_merged)
-    stage_final = next_stage(stage_in, slots_merged)
+   # missing_now = missing_for_stage(stage_in, slots_merged)
+   # stage_final = next_stage(stage_in, slots_merged)
 
     # 4) store user (best-effort)
     try:
