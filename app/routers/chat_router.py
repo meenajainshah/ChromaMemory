@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from routers.memory_router import ensure_conversation, ingest_message
-from services.slot_extraction import extract_slots_from_turn, merge_slots
+from services.slot_extraction import extract_slots_from_turn
 from services.stage_machine import missing_for_stage, next_stage, advance_until_stable
 from services.slot_extraction import smart_merge_slots
 from services.ask_builder import build_reply
