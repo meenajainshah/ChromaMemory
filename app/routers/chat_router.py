@@ -116,22 +116,59 @@ async def chat_turn(
         logging.warning(json.dumps({"event":"rewrite.skip","cid":cid,"err":str(e)}))
         reply_text = det_text
     # 6) store assistant (best-effort)
+
+    # ---- optional: friendly ack when we just advanced into an action stage ----
+    if stage_final != stage_in and stage_final in ("match","schedule"):
+        role = slots_merged.get("role_title") or "the role"
+        loc  = slots_merged.get("location") or "tbd"
+        bud  = slots_merged.get("budget")
+        if isinstance(bud, dict):
+            rng = f"{bud.get('min')}-{bud.get('max')}{(' ' + (bud.get('unit') or '')).strip()}"
+        else:
+            rng = "tbd"
+        ask = f"Noted: **{role}** · Budget **{rng}** · Location **{loc}**.\n\n" + ask
+        
     try:
         ingest_message(
-            cid, "assistant", reply_text,
+            cid, "user", req.text,
+            {**(req.meta or {}), "entity_id":entity_id, "platform":platform,
+             "thread_id":thread_id, "user_id":user_id,
+             "slots": slots_merged, "stage_in": stage_in},
+            f"{idem}:u"
+        )
+    except Exception as e:
+        logging.warning(json.dumps({"event":"store.user.error","cid":cid,"err":str(e)}))
+
+    # ---- style rewrite (NON-authoritative; guarded) ----
+    try:
+        ask = await asyncio.wait_for(rewrite_ask(stage_final, missing_now, slots_merged, ask), timeout=4.0)
+    except Exception:
+        pass  # keep deterministic `ask`
+
+    # ---- store assistant (best-effort) ----
+    try:
+        ingest_message(
+            cid, "assistant", ask,
             {"intent": "hiring", "stage": stage_final, "slots": slots_merged, "stage_in": stage_in},
             f"{idem}:a"
         )
     except Exception as e:
         logging.warning(json.dumps({"event":"store.assistant.error","cid":cid,"err":str(e)}))
 
-    # (optional) single-line debug so you can see slot/state in logs
-    logging.info(json.dumps({"event":"turn.out","cid":cid,"stage":stage_final,"missing":missing_now,"slots":slots_merged}))
+    # ---- debug breadcrumb (helps catch loops) ----
+    logging.info(json.dumps({
+        "event":"turn",
+        "cid":cid,
+        "stage_in":stage_in,
+        "stage_out":stage_final,
+        "missing":missing_now,
+        "got":{k:bool(slots_merged.get(k)) for k in ["role_title","location","budget","seniority","stack","duration"]},
+    }))
 
     return TurnOut(
         ok=True,
         cid=str(cid),
-        text=reply_text,
+        text=ask,
         intent="hiring",
         stage=stage_final,
         suggestions=chips,
