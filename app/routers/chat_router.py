@@ -10,7 +10,7 @@ from services.stage_machine import missing_for_stage, next_stage, advance_until_
 from services.ask_builder import build_reply
 from services.memory_store import list_recent  
 from services.rewriter import rewrite
-from services.rewriter import rewrite
+from services.chat_instructions_loader import get_prompt_for
 from routers.memory_router import ensure_conversation, ingest_message
 from routers.gpt_router import run_llm_turn              # only for optional rewrite
 
