@@ -14,11 +14,11 @@ def _num(x: str) -> float:
 
 def _norm_cur(c: Optional[str]) -> str:
     c = (c or "").strip().lower()
-    if c in {"rs", "rs.", "inr", "₹"}: return "₹"
-    if c in {"usd", "$"}: return "$"
-    if c in {"eur", "€"}: return "€"
-    if c in {"gbp", "£"}: return "£"
-    return c.upper() if c else ""
+    if c in {"₹","rs","rs.","inr"}: return "₹"
+    if c in {"$","usd"}: return "$"
+    if c in {"eur","€"}: return "€"
+    if c in {"gbp","£"}: return "£"
+    return c.upper()  # fallback
 
 # --- Budget patterns (named groups; currency can be before or after) ---
 # --- Budget patterns (currency can be before OR after the number) ---
