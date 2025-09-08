@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from routers.memory_router import ensure_conversation, ingest_message
 from services.slot_extraction import extract_slots_from_turn, merge_slots
 from services.stage_machine import missing_for_stage, next_stage, advance_until_stable
+from services.slot_extraction import smart_merge_slots
 from services.ask_builder import build_reply
 from services.rewriter import rewrite
 from services.chat_instructions_loader import get_prompt_for
@@ -79,7 +80,8 @@ async def chat_turn(
 
     # 2) extract from current turn and merge into working state
     turn_slots   = extract_slots_from_turn(req.text or "")
-    slots_merged = merge_slots(slots_in, turn_slots)
+  
+    slots_merged = smart_merge_slots(slots_in, turn_slots, user_text=req.text or "")
 
     # 3) FSM decisions
     # Single-step "what to ask next" (UI/UX)
