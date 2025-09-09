@@ -8,6 +8,33 @@ _DASHES = "\u2012\u2013\u2014\u2212"
 _DASH_RE = re.compile(f"[{_DASHES}]")
 _CORRECTION = re.compile(r"\b(change|actually|correction|not|instead|rather|make it|update)\b", re.I)
 
+_STOP_AFTER = r"(?=\s+(?:for|with|on|at|per|to|from|of|during|till|until)\b|[.,;!?]|$)"
+_CITY_TOK   = r"[A-Za-z][A-Za-z\-]+"
+
+_LOC_PATTERNS = [
+    re.compile(rf"(?i)\b(?:in|at)\s+({_CITY_TOK}(?:\s+{_CITY_TOK}){{0,3}}){_STOP_AFTER}"),
+    re.compile(rf"(?i)\b(?:location|based\s+in)\s*[:\-]?\s*({_CITY_TOK}(?:\s+{_CITY_TOK}){{0,3}}){_STOP_AFTER}"),
+]
+
+_REMOTE_HINTS = {"remote","work from home","wfh","hybrid","on-site","onsite"}
+
+def _titlecase_city(s: str) -> str:
+    parts = [p for p in (s or "").strip().split() if p]
+    return " ".join(p[:1].upper() + p[1:].lower() for p in parts)
+
+def location(text: str) -> Optional[str]:
+    if not text:
+        return None
+    low = text.lower()
+    for hint in _REMOTE_HINTS:
+        if hint in low:
+            return "Remote" if hint in {"remote","work from home","wfh"} else ("On-site" if "site" in hint else "Hybrid")
+    for pat in _LOC_PATTERNS:
+        m = pat.search(text)
+        if m:
+            return _titlecase_city(m.group(1))
+    return None
+
 def _norm_spaces(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
@@ -51,50 +78,59 @@ _ROLE_KEYWORDS = [
   "qa","tester","analyst","architect","scientist","designer","manager","developer","engineer"
 ]
 
-# -------------------- TECH STACK --------------------
+# Canonical tech names (expand as you like)
 _TECH_CANONICAL: Dict[str, str] = {
     # languages
-    "python": "python", "java": "java", "javascript": "javascript", "typescript": "typescript",
-    "js": "javascript", "ts": "typescript", "golang": "go", "go": "go",
-    "c#": "csharp", "csharp": "csharp", "c++": "cpp", "cpp": "cpp", "ruby": "ruby", "php": "php",
-    "scala": "scala", "rust": "rust", "kotlin": "kotlin",
-    # web / frameworks
-    "node": "nodejs", "nodejs": "nodejs", "node.js": "nodejs",
-    "react": "react", "reactjs": "react", "vue": "vue", "vuejs": "vue", "angular": "angular",
-    "next": "nextjs", "nextjs": "nextjs", "nuxt": "nuxtjs", "nuxtjs": "nuxtjs",
-    "express": "express", "fastapi": "fastapi", "flask": "flask", "django": "django",
-    "spring": "spring", "springboot": "springboot", "spring-boot": "springboot",
-    "rails": "rails", "laravel": "laravel", ".net": "dotnet", "dotnet": "dotnet",
+    "python":"python","java":"java","javascript":"javascript","typescript":"typescript","js":"javascript","ts":"typescript",
+    "golang":"go","go":"go","c#":"csharp","csharp":"csharp","c++":"cpp","cpp":"cpp","ruby":"ruby","php":"php",
+    "scala":"scala","rust":"rust","kotlin":"kotlin",
+    # web/frameworks
+    "node":"nodejs","nodejs":"nodejs","node.js":"nodejs","react":"react","reactjs":"react",
+    "vue":"vue","vuejs":"vue","angular":"angular","next":"nextjs","nextjs":"nextjs","nuxt":"nuxtjs","nuxtjs":"nuxtjs",
+    "express":"express","fastapi":"fastapi","flask":"flask","django":"django","spring":"spring",
+    "springboot":"springboot","spring-boot":"springboot","rails":"rails","laravel":"laravel",".net":"dotnet","dotnet":"dotnet",
     # data / ml
-    "sql": "sql", "mysql": "mysql", "postgres": "postgres", "postgresql": "postgres",
-    "mongodb": "mongodb", "redis": "redis", "kafka": "kafka",
-    "hadoop": "hadoop", "spark": "spark", "airflow": "airflow",
-    "pandas": "pandas", "numpy": "numpy", "tensorflow": "tensorflow", "pytorch": "pytorch",
-    "sklearn": "scikit-learn", "scikit-learn": "scikit-learn",
-    "ml": "ml", "machine learning": "ml", "deep learning": "deep-learning",
-    "nlp": "nlp", "computer vision": "cv", "cv": "cv", "ai": "ai",
+    "sql":"sql","mysql":"mysql","postgres":"postgres","postgresql":"postgres","mongodb":"mongodb","redis":"redis",
+    "kafka":"kafka","hadoop":"hadoop","spark":"spark","airflow":"airflow",
+    "pandas":"pandas","numpy":"numpy","tensorflow":"tensorflow","pytorch":"pytorch",
+    "sklearn":"scikit-learn","scikit-learn":"scikit-learn","dbt":"dbt",
+    "ml":"ml","machine learning":"ml","deep learning":"deep-learning","nlp":"nlp","computer vision":"cv","cv":"cv","ai":"ai",
     # devops / cloud
-    "docker": "docker", "kubernetes": "kubernetes", "k8s": "kubernetes",
-    "aws": "aws", "azure": "azure", "gcp": "gcp", "terraform": "terraform", "ansible": "ansible",
-    "linux": "linux", "git": "git", "github": "github", "gitlab": "gitlab", "ci/cd": "cicd", "cicd": "cicd",
+    "docker":"docker","kubernetes":"kubernetes","k8s":"kubernetes",
+    "aws":"aws","azure":"azure","gcp":"gcp","terraform":"terraform","ansible":"ansible",
+    "linux":"linux","git":"git","github":"github","gitlab":"gitlab","ci/cd":"cicd","cicd":"cicd",
 }
-_TECH_TERMS: List[str] = sorted({*(_TECH_CANONICAL.keys()), *(_TECH_CANONICAL.values())}, key=len, reverse=True)
+
+_TECH_TERMS: List[str] = sorted(
+    { *(_TECH_CANONICAL.keys()), *(_TECH_CANONICAL.values()) },
+    key=len, reverse=True
+)
+
 _STACK_LEADS = [
-    r"tech\s*stack", r"stack", r"skills", r"must[-\s]*haves?", r"nice[-\s]*to[-\s]*haves?",
-    r"experience\s+with", r"experience\s+in", r"proficient\s+in", r"using",
+    r"tech\s*stack",
+    r"stack",
+    r"skills",
+    r"must[-\s]*haves?",
+    r"nice[-\s]*to[-\s]*haves?",
+    r"experience\s+with",
+    r"experience\s+in",
+    r"proficient\s+in",
+    r"using",
 ]
 
 def _canon_tech(tok: str) -> Optional[str]:
+    """Return canonical name or None (do NOT fabricate unknowns)."""
     t = (tok or "").strip().lower()
-    if not t: return None
-    if t in _TECH_CANONICAL: return _TECH_CANONICAL[t]
-    t2 = t.replace(".", "").strip()
+    if not t:
+        return None
+    t2 = t.replace(".", "").replace("  ", " ").strip()
+    if t in _TECH_CANONICAL:  return _TECH_CANONICAL[t]
     if t2 in _TECH_CANONICAL: return _TECH_CANONICAL[t2]
-    t3 = re.sub(r"[^a-z0-9+#\.-]", "", t)
-    return _TECH_CANONICAL.get(t3, t3) if t3 else None
+    return None  # ← critical: reject unknowns
 
 def _split_stack_phrase(s: str) -> List[str]:
-    return [p.strip() for p in re.split(r"[,\|/]|(?:\s+and\s+)|(?:\s*&\s*)", s, flags=re.I) if p.strip()]
+    parts = re.split(r"[,\|/]|(?:\s+and\s+)|(?:\s*&\s*)", s, flags=re.I)
+    return [p.strip() for p in parts if p and p.strip()]
 
 def _scan_known_techs(text: str) -> List[str]:
     low = text.lower()
@@ -106,38 +142,63 @@ def _scan_known_techs(text: str) -> List[str]:
                 found.append(c)
     return found
 
+def _is_garbage_token(tok: str) -> bool:
+    """Filter out budget/location bleed like 'inahmedabadfor20-25lpa'."""
+    t = tok.lower()
+    if len(t) > 24: return True
+    if any(x in t for x in [" lpa","lac","lakh","crore","month","year","hr","hour","per ","₹","$","€","£"]): return True
+    if re.search(r"\d", t) and t not in {"c#","c++"}: return True
+    if "in " in t or t.startswith("in") and not t.startswith("int"): return True
+    if "for" in t: return True
+    return False
+
 def tech_stack(text: str) -> Optional[List[str]]:
-    if not text: return None
-    t = text.strip(); low = t.lower()
+    if not text:
+        return None
+    low = text.lower()
+    candidates: List[str] = []
 
-    # 1) list after a lead phrase
-    m = re.search(rf"(?:{'|'.join(_STACK_LEADS)})\s*[:\-]?\s*(?P<list>.+)$", low, flags=re.I)
-    cand: List[str] = []
+    # 1) explicit “stack/skills/experience with …”
+    lead = rf"(?:{'|'.join(_STACK_LEADS)})\s*[:\-]?\s*(?P<list>.+)$"
+    m = re.search(lead, low, flags=re.I)
     if m:
-        for part in _split_stack_phrase(m.group("list")):
+        raw_list = m.group("list")
+        for part in _split_stack_phrase(raw_list):
             c = _canon_tech(part)
-            if c and c not in cand:
-                cand.append(c)
+            if c and c not in candidates:
+                candidates.append(c)
 
-    # 2) scan entire text
-    for c in _scan_known_techs(t):
-        if c not in cand:
-            cand.append(c)
+    # 2) global scan for known tech terms
+    for c in _scan_known_techs(text):
+        if c not in candidates:
+            candidates.append(c)
 
-    if not cand: return None
+    if not candidates:
+        return None
 
-    # prettify some tokens
-    pretty = []
-    for c in cand:
-        if c in {"ai","ml","nlp","cv","sql","aws","gcp","cicd"}: pretty.append(c.upper())
-        elif c == "dotnet": pretty.append(".NET")
-        elif c == "csharp": pretty.append("C#")
-        elif c == "cpp":    pretty.append("C++")
-        elif c == "nodejs": pretty.append("Node.js")
-        elif c == "nextjs": pretty.append("Next.js")
-        elif c == "nuxtjs": pretty.append("Nuxt.js")
-        else:               pretty.append(c.capitalize())
-    return pretty[:12]
+    # 3) pretty-print / normalize
+    pretty: List[str] = []
+    for c in candidates:
+        if _is_garbage_token(c):    # extra guard (shouldn't trigger now)
+            continue
+        if c in {"ai","ml","nlp","cv","sql","aws","gcp","cicd"}:
+            pretty.append(c.upper())
+        elif c == "dotnet":
+            pretty.append(".NET")
+        elif c == "csharp":
+            pretty.append("C#")
+        elif c == "cpp":
+            pretty.append("C++")
+        elif c == "nodejs":
+            pretty.append("Node.js")
+        elif c == "nextjs":
+            pretty.append("Next.js")
+        elif c == "nuxtjs":
+            pretty.append("Nuxt.js")
+        else:
+            pretty.append(c.capitalize())
+
+    return pretty[:12] if pretty else None
 
 # ----------- extractors -----------
 def budget(text: str) -> Optional[Dict[str, Any]]:

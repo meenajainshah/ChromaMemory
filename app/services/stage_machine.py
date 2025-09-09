@@ -49,11 +49,18 @@ def _filled_simple(v: Any) -> bool:
 # central truth of "is this slot satisfied?"
 def _is_filled(key: str, slots: Dict[str, Any]) -> bool:
     v = (slots or {}).get(key)
-    if key == "budget":        return _filled_budget(v)
-    if key in {"stack"}:       # could be list or string
-        if isinstance(v, list): return len(v) > 0
-        return _filled_simple(v)
-    return _filled_simple(v)
+    if key == "budget":
+        if not v: return False
+        if isinstance(v, dict):
+            return any([v.get("min") is not None, v.get("max") is not None, bool(v.get("raw"))])
+        return isinstance(v, (int,float)) or (isinstance(v,str) and v.strip() != "")
+    if key == "stack":
+        return isinstance(v, list) and len(v) > 0     # ← only lists count
+    if key in {"location","role_title","seniority"}:
+        return isinstance(v, str) and v.strip() != ""
+    # default
+    return bool(v)
+
 
 # dynamic requirements (add/remove per situation)
 def _dynamic_required(stage: str, slots: Dict[str, Any]) -> List[str]:
