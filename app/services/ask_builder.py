@@ -72,6 +72,36 @@ def build_ack(prev_slots: Dict[str, Any], turn_slots: Dict[str, Any]) -> str:
 
     return ("Noted: " + " · ".join(bits) + ".") if bits else ""
 
+    def _ack_line(turn_slots: Dict[str, Any]) -> str:
+    if not turn_slots: return ""
+    bits = []
+    b = turn_slots.get("budget")
+    if b:
+        disp = []
+        if b.get("currency"): disp.append(b["currency"])
+        rng = ""
+        if b.get("min") is not None and b.get("max") is not None:
+            rng = f"{b['min']}-{b['max']}"
+        elif b.get("min") is not None:
+            rng = f"{b['min']}"
+        if rng: disp.append(rng)
+        if b.get("unit"): disp.append(str(b["unit"]).upper())
+        if b.get("period"): disp.append(f"per {b['period']}")
+        bits.append("Budget " + " ".join(disp))
+    if turn_slots.get("location"):
+        bits.append(f"Location {turn_slots['location']}")
+    if turn_slots.get("role_title"):
+        bits.append(turn_slots["role_title"])
+    if turn_slots.get("seniority"):
+        bits.append(f"seniority {turn_slots['seniority']}")
+    # NEW: stack
+    stk = turn_slots.get("stack")
+    if isinstance(stk, list) and stk:
+        bits.append("stack " + ", ".join(stk))
+    elif isinstance(stk, str) and stk.strip():
+        bits.append("stack " + stk.strip())
+    return "Noted: " + " · ".join(bits) + "."
+
 def build_reply(stage: str, missing: List[str], turn_slots: Dict[str, Any], prev_slots: Dict[str, Any] | None = None) -> Tuple[str, List[str]]:
     """
     Compose final text: delta-only ACK + the ask line. 
