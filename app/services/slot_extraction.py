@@ -51,33 +51,111 @@ _ROLE_KEYWORDS = [
   "qa","tester","analyst","architect","scientist","designer","manager","developer","engineer"
 ]
 
-_TECH_KEYWORDS = [
-  "python","java","golang","go","node","react","vue","angular","aws","gcp","azure",
-  "spark","hadoop","airflow","dbt","sql","nosql","postgres","mysql","mongo","docker","kubernetes",
-  "ml","ai","pytorch","tensorflow","scikit","tableau","powerbi","kafka","elasticsearch"
+# -------------------- TECH STACK --------------------
+_TECH_CANONICAL: Dict[str, str] = {
+    # languages
+    "python": "python", "java": "java", "javascript": "javascript", "typescript": "typescript",
+    "js": "javascript", "ts": "typescript", "golang": "go", "go": "go",
+    "c#": "csharp", "csharp": "csharp", "c++": "cpp", "cpp": "cpp", "ruby": "ruby", "php": "php",
+    "scala": "scala", "rust": "rust", "kotlin": "kotlin",
+    # web / frameworks
+    "node": "nodejs", "nodejs": "nodejs", "node.js": "nodejs",
+    "react": "react", "reactjs": "react", "vue": "vue", "vuejs": "vue", "angular": "angular",
+    "next": "nextjs", "nextjs": "nextjs", "nuxt": "nuxtjs", "nuxtjs": "nuxtjs",
+    "express": "express", "fastapi": "fastapi", "flask": "flask", "django": "django",
+    "spring": "spring", "springboot": "springboot", "spring-boot": "springboot",
+    "rails": "rails", "laravel": "laravel", ".net": "dotnet", "dotnet": "dotnet",
+    # data / ml
+    "sql": "sql", "mysql": "mysql", "postgres": "postgres", "postgresql": "postgres",
+    "mongodb": "mongodb", "redis": "redis", "kafka": "kafka",
+    "hadoop": "hadoop", "spark": "spark", "airflow": "airflow",
+    "pandas": "pandas", "numpy": "numpy", "tensorflow": "tensorflow", "pytorch": "pytorch",
+    "sklearn": "scikit-learn", "scikit-learn": "scikit-learn",
+    "ml": "ml", "machine learning": "ml", "deep learning": "deep-learning",
+    "nlp": "nlp", "computer vision": "cv", "cv": "cv", "ai": "ai",
+    # devops / cloud
+    "docker": "docker", "kubernetes": "kubernetes", "k8s": "kubernetes",
+    "aws": "aws", "azure": "azure", "gcp": "gcp", "terraform": "terraform", "ansible": "ansible",
+    "linux": "linux", "git": "git", "github": "github", "gitlab": "gitlab", "ci/cd": "cicd", "cicd": "cicd",
+}
+_TECH_TERMS: List[str] = sorted({*(_TECH_CANONICAL.keys()), *(_TECH_CANONICAL.values())}, key=len, reverse=True)
+_STACK_LEADS = [
+    r"tech\s*stack", r"stack", r"skills", r"must[-\s]*haves?", r"nice[-\s]*to[-\s]*haves?",
+    r"experience\s+with", r"experience\s+in", r"proficient\s+in", r"using",
 ]
+
+def _canon_tech(tok: str) -> Optional[str]:
+    t = (tok or "").strip().lower()
+    if not t: return None
+    if t in _TECH_CANONICAL: return _TECH_CANONICAL[t]
+    t2 = t.replace(".", "").strip()
+    if t2 in _TECH_CANONICAL: return _TECH_CANONICAL[t2]
+    t3 = re.sub(r"[^a-z0-9+#\.-]", "", t)
+    return _TECH_CANONICAL.get(t3, t3) if t3 else None
+
+def _split_stack_phrase(s: str) -> List[str]:
+    return [p.strip() for p in re.split(r"[,\|/]|(?:\s+and\s+)|(?:\s*&\s*)", s, flags=re.I) if p.strip()]
+
+def _scan_known_techs(text: str) -> List[str]:
+    low = text.lower()
+    found: List[str] = []
+    for term in _TECH_TERMS:
+        if re.search(rf"\b{re.escape(term)}\b", low):
+            c = _canon_tech(term)
+            if c and c not in found:
+                found.append(c)
+    return found
+
+def tech_stack(text: str) -> Optional[List[str]]:
+    if not text: return None
+    t = text.strip(); low = t.lower()
+
+    # 1) list after a lead phrase
+    m = re.search(rf"(?:{'|'.join(_STACK_LEADS)})\s*[:\-]?\s*(?P<list>.+)$", low, flags=re.I)
+    cand: List[str] = []
+    if m:
+        for part in _split_stack_phrase(m.group("list")):
+            c = _canon_tech(part)
+            if c and c not in cand:
+                cand.append(c)
+
+    # 2) scan entire text
+    for c in _scan_known_techs(t):
+        if c not in cand:
+            cand.append(c)
+
+    if not cand: return None
+
+    # prettify some tokens
+    pretty = []
+    for c in cand:
+        if c in {"ai","ml","nlp","cv","sql","aws","gcp","cicd"}: pretty.append(c.upper())
+        elif c == "dotnet": pretty.append(".NET")
+        elif c == "csharp": pretty.append("C#")
+        elif c == "cpp":    pretty.append("C++")
+        elif c == "nodejs": pretty.append("Node.js")
+        elif c == "nextjs": pretty.append("Next.js")
+        elif c == "nuxtjs": pretty.append("Nuxt.js")
+        else:               pretty.append(c.capitalize())
+    return pretty[:12]
 
 # ----------- extractors -----------
 def budget(text: str) -> Optional[Dict[str, Any]]:
-    if not text:
-        return None
-
-    # normalize fancy dashes to a simple hyphen (e.g. 18–22 → 18-22)
-    text = _DASH_RE.sub("-", text)
+    if not text: return None
+    text = _DASH_RE.sub("-", text)  # normalize 18–22 → 18-22
 
     m = _BUDGET_RANGE.search(text) or _BUDGET_SINGLE.search(text)
-    if not m:
-        return None
+    if not m: return None
 
     g = m.groupdict()
-    cur = (g.get("cur") or "").strip()
-    v1  = g.get("min")
-    v2  = g.get("max") or v1
-    unit_token  = (g.get("unit")   or "").lower()
-    period_tok  = (g.get("period") or "").lower()
-    raw_span    = m.group(0)
+    cur = (g.get("cur1") or g.get("cur2") or "").strip()
+    v1  = g.get("v1")
+    v2  = g.get("v2") or v1
+    unit_token = (g.get("unit") or "").lower()
+    period_tok = (g.get("period") or "").lower()
+    raw_span   = m.group(0)
 
-    # If we see a time period but NO currency/unit and no explicit "per", treat as duration, not salary
+    # duration guard: "for 6 months" shouldn't be read as pay w/o per/ /
     if not cur and not unit_token and period_tok and ("per" not in raw_span.lower() and "/" not in raw_span):
         return None
 
@@ -88,21 +166,15 @@ def budget(text: str) -> Optional[Dict[str, Any]]:
     except Exception:
         return None
 
-    # normalize unit shorthands
-    if period_tok in {"hr","hour"}:
-        period_norm = "hour"
-    elif period_tok in {"mo","month"}:
-        period_norm = "month"
-    elif period_tok in {"yr","year","annum","pa"}:
-        period_norm = "year"
-    else:
-        period_norm = ""
+    if period_tok in {"hr","hour"}:   period_norm = "hour"
+    elif period_tok in {"mo","month"}: period_norm = "month"
+    elif period_tok in {"yr","year","annum","pa"}: period_norm = "year"
+    elif period_tok in {"day","d"}:    period_norm = "day"
+    else:                              period_norm = ""
 
-    # default INR symbol if unit implies INR and currency missing
     if not cur and unit_token in {"lpa","lac","lakh","lakhs","cr","crore"}:
         cur = "₹"
 
-    # scale k/m
     if unit_token == "k":
         if v1f is not None: v1f *= 1_000
         if v2f is not None: v2f *= 1_000
@@ -132,23 +204,19 @@ def role_title(text: str) -> Optional[str]:
     if not text: return None
     t = text.lower()
 
-    # patterns like "need/hiring/looking for <role> (in|at|for ...)?"
     m = re.search(r"(?:need|looking\s+for|hiring)\s+(?:an?\s+|the\s+)?([a-z][a-z0-9\-\s]{2,40})\b", t)
     if m:
         cand = _norm_spaces(m.group(1))
-        # trim trailing budget/duration clauses
         cand = re.sub(r"\s+(for|at)\s+.*$", "", cand).strip()
-        if not re.match(r"^\d", cand):  # avoid leading numerics
+        if not re.match(r"^\d", cand):
             return cand
 
-    # "<role> in <city>" heuristic
     m = re.search(r"\b([a-z][a-z0-9\-\s]{2,40})\s+(?:in|at)\s+[a-z][a-z\-\s]{2,40}\b", t)
     if m:
         cand = _norm_spaces(m.group(1))
         if not re.search(r"\b(lpa|rs|inr|\$|\d|month|mo|yr|year|hour|hr)\b", cand):
             return cand
 
-    # keyword fallback: longest plausible phrase ending with known role words
     best = None
     for kw in _ROLE_KEYWORDS:
         m = re.search(rf"\b([a-z][a-z0-9\-\s]{{0,30}}{re.escape(kw)})\b", t)
@@ -165,59 +233,63 @@ def seniority(text: str) -> Optional[str]:
             return s
     return None
 
-def stack(text: str) -> Optional[str]:
-    if not text: return None
-    t = text.lower()
-    hits: List[str] = []
-    for k in _TECH_KEYWORDS:
-        if re.search(rf"\b{re.escape(k)}\b", t):
-            hits.append(k)
-    # Also capture simple comma lists after “stack:” or “tech:”
-    m = re.search(r"(?:stack|tech stack|tech)\s*:\s*([a-z0-9,\s\+\-_/\.]{3,100})", t, re.I)
-    if m:
-        extra = [x.strip().lower() for x in m.group(1).split(",") if x.strip()]
-        for x in extra:
-            if x not in hits: hits.append(x)
-    return ", ".join(dict.fromkeys(hits)) if hits else None
-
 def extract_slots_from_turn(text: str) -> Dict[str, Any]:
+    """Return a dict with any slots we can confidently extract from this turn."""
     out: Dict[str, Any] = {}
-
-    # budget
     try:
         b = budget(text)
+        if b: out["budget"] = b
     except Exception:
-        b = None
-    if b:
-        out["budget"] = b
-
-    # location
+        pass
     try:
         loc = location(text)
+        if loc: out["location"] = loc
     except Exception:
-        loc = None
-    if loc:
-        out["location"] = loc
-
-    # role_title
+        pass
     try:
         rt = role_title(text)
+        if rt: out["role_title"] = rt
     except Exception:
-        rt = None
-    if rt:
-        out["role_title"] = rt
-
-    # seniority
+        pass
     try:
         sr = seniority(text)
+        if sr: out["seniority"] = sr
     except Exception:
-        sr = None
-    if sr:
-        out["seniority"] = sr
+        pass
+    try:
+        stk = tech_stack(text)
+        if stk: out["stack"] = stk            # LIST, not string
+    except Exception:
+        pass
+    return out
 
+# -------------------- merge logic --------------------
+def _union_stack(old: Any, new: Any) -> List[str]:
+    cur: List[str] = []
+    if isinstance(old, list):
+        cur.extend([x for x in old if isinstance(x, str) and x.strip()])
+    elif isinstance(old, str) and old.strip():
+        cur.append(old.strip())
+
+    if isinstance(new, list):
+        cur.extend([x for x in new if isinstance(x, str) and x.strip()])
+    elif isinstance(new, str) and new.strip():
+        cur.append(new.strip())
+
+    # canonicalize (important)
+    canon = []
+    for x in cur:
+        cx = _canon_tech(x) or x
+        canon.append(cx)
+
+    seen, out = set(), []
+    for x in canon:
+        if x not in seen:
+            seen.add(x); out.append(x)
     return out
 
 def smart_merge_slots(existing: Dict[str, Any], new: Dict[str, Any], user_text: str = "") -> Dict[str, Any]:
+    """Conflict-aware merge: augment budget, respect corrections, union stack, avoid role downgrades."""
     ex = dict(existing or {}); nt = new or {}
 
     # budget: augment missing pieces only
@@ -237,11 +309,15 @@ def smart_merge_slots(existing: Dict[str, Any], new: Dict[str, Any], user_text: 
         if not ex.get("location") or _CORRECTION.search(user_text):
             ex["location"] = nt["location"]
 
-    # seniority & stack: latest wins
-    if nt.get("seniority"): ex["seniority"] = nt["seniority"]
-    if nt.get("stack"):     ex["stack"]     = nt["stack"]
+    # seniority: latest wins
+    if nt.get("seniority"):
+        ex["seniority"] = nt["seniority"]
 
-    # role_title: avoid downgrades unless explicitly corrected
+    # stack: union
+    if nt.get("stack"):
+        ex["stack"] = _union_stack(ex.get("stack"), nt["stack"])
+
+    # role_title: avoid downgrades unless explicitly corrected or more specific
     if nt.get("role_title"):
         new_rt = nt["role_title"].strip()
         cur_rt = (ex.get("role_title") or "").strip()
@@ -252,6 +328,5 @@ def smart_merge_slots(existing: Dict[str, Any], new: Dict[str, Any], user_text: 
             more_specific = (len(new_rt) > len(cur_rt) and cur_rt in new_rt)
             if reframe or more_specific:
                 ex["role_title"] = new_rt
-            # else keep cur_rt
 
     return ex
