@@ -325,35 +325,22 @@ def extract_slots_from_turn(text: str) -> Dict[str, Any]:
     return out
 
 # -------------------- merge logic --------------------
-def _union_stack(old: Any, new: Any) -> List[str]:
-    cur: List[str] = []
-    if isinstance(old, list):
-        cur.extend([x for x in old if isinstance(x, str) and x.strip()])
-    elif isinstance(old, str) and old.strip():
-        cur.append(old.strip())
-
-    if isinstance(new, list):
-        cur.extend([x for x in new if isinstance(x, str) and x.strip()])
-    elif isinstance(new, str) and new.strip():
-        cur.append(new.strip())
-
-    # canonicalize (important)
-    canon = []
+def _union_stack(old, new):
+    cur: list[str] = []
+    if isinstance(old, list): cur += [x for x in old if isinstance(x, str) and x.strip()]
+    elif isinstance(old, str) and old.strip(): cur.append(old.strip())
+    if isinstance(new, list): cur += [x for x in new if isinstance(x, str) and x.strip()]
+    elif isinstance(new, str) and new.strip(): cur.append(new.strip())
+    cur = [_canon_tech(x) for x in cur]
+    out, seen = [], set()
     for x in cur:
-        cx = _canon_tech(x) or x
-        canon.append(cx)
-
-    seen, out = set(), []
-    for x in canon:
-        if x not in seen:
+        if x and x not in seen:
             seen.add(x); out.append(x)
     return out
 
 def smart_merge_slots(existing: Dict[str, Any], new: Dict[str, Any], user_text: str = "") -> Dict[str, Any]:
-    """Conflict-aware merge: augment budget, respect corrections, union stack, avoid role downgrades."""
     ex = dict(existing or {}); nt = new or {}
-
-    # budget: augment missing pieces only
+    # budget: augment
     if nt.get("budget"):
         if not ex.get("budget"):
             ex["budget"] = nt["budget"]
@@ -364,30 +351,22 @@ def smart_merge_slots(existing: Dict[str, Any], new: Dict[str, Any], user_text: 
             if b.get("min") is None and nb.get("min") is not None: b["min"] = nb["min"]
             if b.get("max") is None and nb.get("max") is not None: b["max"] = nb["max"]
             ex["budget"] = b
-
-    # location: replace only if explicit correction or currently empty
+    # location: only if empty or user corrected
     if nt.get("location"):
         if not ex.get("location") or _CORRECTION.search(user_text):
             ex["location"] = nt["location"]
-
     # seniority: latest wins
-    if nt.get("seniority"):
-        ex["seniority"] = nt["seniority"]
-
+    if nt.get("seniority"): ex["seniority"] = nt["seniority"]
     # stack: union
-    if nt.get("stack"):
-        ex["stack"] = _union_stack(ex.get("stack"), nt["stack"])
-
-    # role_title: avoid downgrades unless explicitly corrected or more specific
+    if nt.get("stack"): ex["stack"] = _union_stack(ex.get("stack"), nt["stack"])
+    # role_title: keep first unless explicitly corrected or more specific
     if nt.get("role_title"):
         new_rt = nt["role_title"].strip()
         cur_rt = (ex.get("role_title") or "").strip()
         if not cur_rt:
             ex["role_title"] = new_rt
         else:
-            reframe = _CORRECTION.search(user_text)
             more_specific = (len(new_rt) > len(cur_rt) and cur_rt in new_rt)
-            if reframe or more_specific:
+            if _CORRECTION.search(user_text) or more_specific:
                 ex["role_title"] = new_rt
-
     return ex

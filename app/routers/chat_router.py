@@ -12,6 +12,11 @@ from services.slot_extraction import smart_merge_slots
 from services.ask_builder import build_reply
 from services.rewriter import rewrite
 from services.chat_instructions_loader import get_prompt_for
+from services.extract_multi import extract_jobs
+from services.request_scope import (
+    ensure_active_request, begin_request, update_request,
+    get_active_rid, set_active_rid, get_request, list_requests_for_thread
+)
 
 # Optional: recover prior slots from history if client didn't send any
 try:
@@ -59,103 +64,104 @@ def last_slots_for_cid(cid: str) -> Dict[str, Any]:
 @router.post("/turn", response_model=TurnOut)
 async def chat_turn(
     req: TurnIn,
-    # hyphenated header aliases play nicely behind proxies
     entity_id: str = Header(..., alias="entity-id"),
     platform:  str = Header(..., alias="platform"),
     thread_id: str = Header(..., alias="thread-id"),
     user_id:   str = Header(..., alias="user-id"),
     idem_hdr: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    # 0) ensure conversation + idem key
-    cid = req.cid or ensure_conversation(entity_id, platform, thread_id)
+    cid = ensure_conversation(entity_id, platform, thread_id)
     if not cid:
         raise HTTPException(500, "ensure_conversation returned empty id")
     idem = idem_hdr or uuid.uuid4().hex
 
-    # 1) incoming state (prefer client meta; else recover)
-    stage_in = (req.meta or {}).get("stage") or "collect"
-    slots_in = (req.meta or {}).get("slots") or {}
-    if not slots_in:
-        slots_in = last_slots_for_cid(cid)
+    # active rid (from client meta or memory)
+    rid = (req.meta or {}).get("rid") or ensure_active_request(cid, thread_id)
+    active = get_request(rid) or {}
+    prev_slots = active.get("slots") or {}
+    stage_in   = active.get("stage") or "collect"
 
-    # 2) extract from current turn and merge into working state
-    turn_slots   = extract_slots_from_turn(req.text or "")
-  
-    slots_merged = smart_merge_slots(slots_in, turn_slots, user_text=req.text or "")
+    # Multi-job detection
+    jobs = extract_jobs(req.text)
+    spawned_rid: Optional[str] = None
+    if len(jobs) >= 2:
+        created: List[str] = []
+        for j in jobs:
+            r = begin_request(cid, thread_id, seed_slots=j["slots"])
+            created.append(r)
+        # pick richest as focus
+        def richness(rid0: str) -> int:
+            s = (get_request(rid0) or {}).get("slots") or {}
+            return sum(1 for k in ("role_title","location","budget") if s.get(k))
+        created.sort(key=richness, reverse=True)
+        focus = created[0]
+        set_active_rid(thread_id, focus)
+        rid = focus
+        active = get_request(rid) or {}
+        prev_slots = active.get("slots") or {}
+        stage_in   = active.get("stage") or "collect"
+        spawned_rid = rid
 
-    # 3) FSM decisions
-    # Single-step "what to ask next" (UI/UX)
-    stage_next  = next_stage(stage_in, slots_merged)
-    ask_stage   = stage_next if stage_next != stage_in else stage_in
-    missing_now = missing_for_stage(ask_stage, slots_merged)
+    # Single job (or continuing): extract + smart merge
+    turn_slots = extract_slots_from_turn(req.text)
+    merged = smart_merge_slots(prev_slots, turn_slots, req.text)
 
-    # Multi-step "what to store as stage" (server state)
-    stage_final = advance_until_stable(stage_in, slots_merged)
-
-    # 4) store user (best-effort, ONCE)
+    # Store user (best-effort)
     try:
         ingest_message(
             cid, "user", req.text,
-            {
-                **(req.meta or {}),
-                "entity_id": entity_id, "platform": platform,
-                "thread_id": thread_id, "user_id": user_id,
-                "slots": slots_merged, "stage_in": stage_in
-            },
+            {"entity_id":entity_id,"platform":platform,"thread_id":thread_id,"user_id":user_id,
+             "rid": rid, "slots": merged, "stage_in": stage_in},
             f"{idem}:u"
         )
     except Exception as e:
-        logging.warning(json.dumps({"event":"store.user.error","cid":cid,"err":str(e)}))
+        logging.warning(json.dumps({"event":"store.user.error","cid":cid,"rid":rid,"err":str(e)}))
 
-    # 5) build deterministic reply; optional rewrite for tone ONLY
-    det_text, chips = build_reply(ask_stage, missing_now, turn_slots, prev_slots=slots_in) # acknowledge only what changed this turn
-    reply_text = det_text
+    # Decide stage to ask from (single hop) and stage to store (multi-hop allowed)
+    stage_next  = next_stage(stage_in, merged)
+    ask_stage   = stage_next if stage_next != stage_in else stage_in
+    stage_final = advance_until_stable(stage_in, merged)
+    missing_now = missing_for_stage(ask_stage, merged)
 
-    if USE_LLM_REWRITE and det_text:
-        try:
-            policy_snippet = None
-            try:
-                # pass an excerpt to keep the rewriter in-policy (optional)
-                policy_snippet = await get_prompt_for("hiring")
-            except Exception:
-                policy_snippet = None
+    # Deterministic text + chips
+    text, chips = build_reply(ask_stage, missing_now, turn_slots=turn_slots, prev_slots=prev_slots)
 
-            reply_text = await asyncio.wait_for(
-                rewrite(det_text, tone="concise, friendly", policy=policy_snippet),
-                timeout=LLM_TIMEOUT_SECS
-            )
-        except Exception as e:
-            logging.warning(json.dumps({"event":"rewrite.skip","cid":cid,"err":str(e)}))
-            reply_text = det_text
+    # Optional: LLM rewrite (kept outside this snippet; you can call your rewriter here)
+    reply_text = text  # keep deterministic baseline
 
-    # 6) store assistant (best-effort)
+    # Persist request object
+    update_request(rid, slots=merged, stage=stage_final, title=merged.get("role_title"))
+
+    # Store assistant (best-effort)
     try:
         ingest_message(
             cid, "assistant", reply_text,
-            {"intent": "hiring", "stage": stage_final, "slots": slots_merged, "stage_in": stage_in},
+            {"intent":"hiring","stage":stage_final,"rid":rid,"slots":merged,"stage_in":stage_in},
             f"{idem}:a"
         )
     except Exception as e:
-        logging.warning(json.dumps({"event":"store.assistant.error","cid":cid,"err":str(e)}))
+        logging.warning(json.dumps({"event":"store.assistant.error","cid":cid,"rid":rid,"err":str(e)}))
 
-    # 7) debug breadcrumb
+    # Breadcrumb (helps spot loops fast)
     logging.info(json.dumps({
         "event":"turn",
-        "cid":cid,
-        "stage_in":stage_in,
-        "stage_out":stage_final,
-        "ask_stage":ask_stage,
+        "cid":cid,"rid":rid,"stage_in":stage_in,"stage_out":stage_final,
         "missing":missing_now,
-        "turn_slots": {k: bool(turn_slots.get(k)) for k in turn_slots.keys()},
-        "merged": {k: bool(slots_merged.get(k)) for k in ["role_title","location","budget","seniority","stack","duration"]},
+        "got":{k:bool(merged.get(k)) for k in ["role_title","location","budget","seniority","stack"]},
+        **({"spawned_rid": spawned_rid} if spawned_rid else {})
     }))
 
-    return TurnOut(
-        ok=True,
-        cid=str(cid),
-        text=reply_text,
-        intent="hiring",
-        stage=stage_final,
-        suggestions=chips,
-        meta={"slots": slots_merged}
-    )
+    return {
+        "ok": True,
+        "cid": cid,
+        "rid": rid,
+        "text": reply_text,
+        "intent": "hiring",
+        "stage": stage_final,
+        "suggestions": chips,
+        "meta": {
+            "slots": merged,
+            "requests": list_requests_for_thread(thread_id),
+            **({"spawned_rid": spawned_rid} if spawned_rid else {})
+        }
+    }
